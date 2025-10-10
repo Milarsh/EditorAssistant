@@ -1,0 +1,356 @@
+openapi: 3.0.3
+info:
+  title: Editor Assistant API
+  version: 0.1.0
+  description: >
+    Базовое API бэкенда. Возвращает JSON и предсказуемые ошибки.
+    Временные метки — в UTC
+
+servers:
+  - url: http://localhost:8000
+    description: Local
+
+tags:
+  - name: Health
+  - name: Sources
+  - name: Articles
+  - name: Placeholders
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /api/sources:
+    get:
+      tags: [Sources]
+      summary: Список источников
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourcesList'
+              examples:
+                ok:
+                  value:
+                    - id: 1
+                      name: Example
+                      rss_url: https://example.com/rss.xml
+                      enabled: true
+                      created_at: '2025-10-10T09:20:17Z'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [Sources]
+      summary: Добавить источник
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceCreate'
+            examples:
+              sample:
+                value:
+                  name: Example
+                  rss_url: https://example.com/rss.xml
+                  enabled: true
+      responses:
+        '201':
+          description: Создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Source'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/sources/{id}:
+    delete:
+      tags: [Sources]
+      summary: Удалить источник
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Удалено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: deleted }
+                  id: { type: integer, example: 1 }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/articles:
+    get:
+      tags: [Articles]
+      summary: Список статей
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticlesList'
+              examples:
+                ok:
+                  value:
+                    total: 1
+                    limit: 5
+                    offset: 0
+                    items:
+                      - id: 1
+                        source_id: 2
+                        title: Test news
+                        link: https://example.com/news/1
+                        description: Full text
+                        guid: guid-1
+                        published_at: '2025-10-10T10:05:51Z'
+                        fetched_at: '2025-10-10T09:20:17Z'
+                        lang: ru
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/articles/{id}:
+    get:
+      tags: [Articles]
+      summary: Получить статью по id
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/stopwords:
+    get:
+      tags: [Placeholders]
+      summary: Заглушка (будет реализовано позже)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+    post:
+      tags: [Placeholders]
+      summary: Заглушка (будет реализовано позже)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+  /api/categories:
+    get:
+      tags: [Placeholders]
+      summary: Заглушка (будет реализовано позже)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+    post:
+      tags: [Placeholders]
+      summary: Заглушка (будет реализовано позже)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    SourceId:
+      name: source_id
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1 }
+      description: Фильтр по источнику
+    Q:
+      name: q
+      in: query
+      required: false
+      schema: { type: string, maxLength: 200 }
+      description: Поиск по заголовку/описанию (ILIKE)
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              description: Машинно-читабельный код ошибки
+              enum:
+                - bad_request
+                - not_found
+                - conflict
+                - too_many_requests
+                - method_not_allowed
+                - not_implemented
+                - internal_error
+                - source_error
+                - parser_error
+              example: bad_request
+            message:
+              type: string
+              description: Человекочитаемое сообщение
+            request_id:
+              type: string
+              description: Простой request id (для логов)
+            details:
+              type: object
+              additionalProperties: true
+
+    SourceCreate:
+      type: object
+      required: [name, rss_url]
+      properties:
+        name: { type: string, minLength: 1 }
+        rss_url:
+          type: string
+          format: uri
+          description: HTTP(S) RSS URL
+        enabled:
+          type: boolean
+          default: true
+
+    Source:
+      type: object
+      required: [id, name, rss_url, enabled, created_at]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        rss_url: { type: string, format: uri }
+        enabled: { type: boolean }
+        created_at:
+          type: string
+          format: date-time
+          description: UTC
+
+    SourcesList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Source'
+
+    Article:
+      type: object
+      required: [id, source_id, title, link, guid, fetched_at]
+      properties:
+        id: { type: integer }
+        source_id: { type: integer }
+        title: { type: string }
+        link: { type: string, format: uri }
+        description: { type: string, nullable: true }
+        guid: { type: string }
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC
+        fetched_at:
+          type: string
+          format: date-time
+          description: UTC
+        lang:
+          type: string
+          nullable: true
+          description: ISO 639-1 (напр., "ru")
+
+    ArticlesList:
+      type: object
+      required: [total, limit, offset, items]
+      properties:
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Article'
+
+  responses:
+    BadRequest:
+      description: Неверные данные
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Конфликт (например, дубликат rss_url)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Превышен лимит запросов
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotImplemented:
+      description: Не реализовано (заглушка)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Внутренняя ошибка
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
