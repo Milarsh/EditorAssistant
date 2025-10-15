@@ -7,7 +7,8 @@ from urllib.parse import urlparse, parse_qs
 from collections import deque, defaultdict
 
 from src.db.db import SessionLocal
-from src.db.models import Source, Article
+from src.db.models.source import Source
+from src.db.models.article import Article
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
