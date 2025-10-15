@@ -1,12 +1,12 @@
-from db import schema_exists, create_schema
+from src.db.db import schema_exists, create_schema
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-def db_init():
+def schema_init():
     try:
         if schema_exists():
             print("DB schema already exists")
         else:
-            schema = create_schema()
+            create_schema()
             print("DB schema created")
     except OperationalError as error:
         print(f"DB schema is not ready: {error}")

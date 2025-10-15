@@ -8,8 +8,8 @@ import feedparser
 from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 
-from .db import SessionLocal
-from .models import Source, Article
+from src.db.db import SessionLocal
+from src.db.models import Source, Article
 
 LOG_DIR = os.path.abspath(os.getenv("LOG_DIR", "./log"))
 FETCH_TIMEOUT = float(os.getenv("FETCH_TIMEOUT", "10.0"))

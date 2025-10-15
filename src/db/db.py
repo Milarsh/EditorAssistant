@@ -1,8 +1,7 @@
 import os
-
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
-from .models import Base
+from src.db.models import Base
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://editor:editor_pwd_dev@db:5432/editor_assistant")
 

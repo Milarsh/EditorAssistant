@@ -6,8 +6,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from collections import deque, defaultdict
 
-from .db import SessionLocal
-from .models import Source, Article
+from src.db.db import SessionLocal
+from src.db.models import Source, Article
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
