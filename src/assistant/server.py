@@ -114,24 +114,25 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ip = self.address_string()
             try:
                 _rate_check(ip)
-            except ApiError as e:
-                return self._json_error(e.status, e.code, str(e))
+            except ApiError as error:
+                return self._json_error(error.status, error.code, str(error))
 
             parsed = urlparse(self.path)
             path = parsed.path
-            for m, regex, handler_name in self.routes:
-                if m == method:
-                    mobj = regex.match(path)
-                    if mobj:
+            for http_method, regex, handler_name in self.routes:
+                if http_method == method:
+                    match = regex.match(path)
+                    if match:
                         try:
-                            return getattr(self, handler_name)(mobj, parse_qs(parsed.query))
-                        except ApiError as e:
-                            return self._json_error(e.status, e.code, str(e), e.details)
-                        except IntegrityError as e:
+                            handler = getattr(self, handler_name)
+                            return handler(match, parse_qs(parsed.query))
+                        except ApiError as error:
+                            return self._json_error(error.status, error.code, str(error), error.details)
+                        except IntegrityError as error:
                             # дубликаты/уникальные ограничения и пр.
-                            return self._json_error(409, "conflict", "Database constraint violation", {"detail": str(e.orig)})
-                        except Exception as e:
-                            print(f"[ERROR] {method} {path}: {e}")
+                            return self._json_error(409, "conflict", "Database constraint violation", {"detail": str(error.orig)})
+                        except Exception as error:
+                            print(f"[ERROR] {method} {path}: {error}")
                             return self._json_error(500, "internal_error", "Internal server error")
             return self._json_error(405, "method_not_allowed", "Method not allowed")
 
@@ -157,22 +158,22 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             print(f"[{self.command}] {self.path} - {self.address_string()}")
 
         # ---- Handlers ----
-        def healthz(self, m, q):
+        def healthz(self, match, query):
             self._send(200, b"OK\n", "text/plain; charset=utf-8")
 
-        def root(self, m, q):
+        def root(self, match, query):
             self._send(200, b"Editor Assistant backend is running\n", "text/plain; charset=utf-8")
 
         # ---- Sources ----
-        def list_sources(self, m, q):
-            with SessionLocal() as s:
-                rows = s.execute(select(Source).order_by(Source.id)).scalars().all()
+        def list_sources(self, match, query):
+            with SessionLocal() as session:
+                rows = session.execute(select(Source).order_by(Source.id)).scalars().all()
                 self._json_ok([{
                     "id": r.id, "name": r.name, "rss_url": r.rss_url,
                     "enabled": r.enabled, "created_at": r.created_at
                 } for r in rows])
 
-        def create_source(self, m, q):
+        def create_source(self, match, query):
             body = parse_json_body(self) or {}
             name = (body.get("name") or "").strip()
             rss_url = (body.get("rss_url") or "").strip()
@@ -186,36 +187,36 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             if errors:
                 raise ValidationError("Invalid fields", errors)
 
-            with SessionLocal() as s:
+            with SessionLocal() as session:
                 try:
                     obj = Source(name=name, rss_url=rss_url, enabled=enabled)
-                    s.add(obj);
-                    s.commit();
-                    s.refresh(obj)
-                except IntegrityError as e:
-                    s.rollback()
+                    session.add(obj)
+                    session.commit()
+                    session.refresh(obj)
+                except IntegrityError as error:
+                    session.rollback()
                     raise Conflict("rss_url already exists")
                 self._json_ok({"id": obj.id, "name": obj.name, "rss_url": obj.rss_url,
                                "enabled": obj.enabled, "created_at": obj.created_at}, status=201)
 
-        def delete_source(self, m, q):
-            source_id = int(m.group(1))
-            with SessionLocal() as s:
-                obj = s.get(Source, source_id)
+        def delete_source(self, match, query):
+            source_id = int(match.group(1))
+            with SessionLocal() as session:
+                obj = session.get(Source, source_id)
                 if not obj:
                     raise NotFound("Source not found")
-                s.delete(obj);
-                s.commit()
+                session.delete(obj);
+                session.commit()
                 self._json_ok({"status": "deleted", "id": source_id})
 
         # ---- Articles ----
-        def list_articles(self, m, q):
-            source_id = int(q.get("source_id", [0])[0]) if "source_id" in q else None
-            text_q = (q.get("q", [""])[0] or "").strip()
-            limit = max(1, min(100, int(q.get("limit", [20])[0])))
-            offset = max(0, int(q.get("offset", [0])[0]))
+        def list_articles(self, match, query):
+            source_id = int(query.get("source_id", [0])[0]) if "source_id" in query else None
+            text_q = (query.get("q", [""])[0] or "").strip()
+            limit = max(1, min(100, int(query.get("limit", [20])[0])))
+            offset = max(0, int(query.get("offset", [0])[0]))
 
-            with SessionLocal() as s:
+            with SessionLocal() as session:
                 stmt = select(Article)
                 if source_id:
                     stmt = stmt.where(Article.source_id == source_id)
@@ -223,9 +224,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     ilike = f"%{text_q}%"
                     stmt = stmt.where((Article.title.ilike(ilike)) | (Article.description.ilike(ilike)))
 
-                total = s.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+                total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
                 stmt = stmt.order_by(Article.published_at.desc().nulls_last(), Article.id.desc())
-                rows = s.execute(stmt.limit(limit).offset(offset)).scalars().all()
+                rows = session.execute(stmt.limit(limit).offset(offset)).scalars().all()
 
                 self._json_ok({
                     "total": total, "limit": limit, "offset": offset,
@@ -241,25 +242,25 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     } for a in rows]
                 })
 
-        def get_article(self, m, q):
-            art_id = int(m.group(1))
-            with SessionLocal() as s:
-                a = s.get(Article, art_id)
-                if not a:
+        def get_article(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
                     raise NotFound("Article not found")
                 self._json_ok({
-                    "id": a.id,
-                    "source_id": a.source_id,
-                    "title": a.title,
-                    "link": a.link,
-                    "description": a.description,
-                    "guid": a.guid,
-                    "published_at": a.published_at,
-                    "fetched_at": a.fetched_at,
+                    "id": article.id,
+                    "source_id": article.source_id,
+                    "title": article.title,
+                    "link": article.link,
+                    "description": article.description,
+                    "guid": article.guid,
+                    "published_at": article.published_at,
+                    "fetched_at": article.fetched_at,
                 })
 
         # ---- заглушка ----
-        def not_impl(self, m, q):
+        def not_impl(self, match, query):
             raise ApiError("Endpoint will be implemented later", status=501, code="not_implemented")
 
     httpd = HTTPServer((host, port), Handler)
