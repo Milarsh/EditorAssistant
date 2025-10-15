@@ -25,29 +25,29 @@ def log_path_for_today() -> str:
 class DailyFileLogger:
     def __init__(self):
         self._path = None
-        self._fp = None
+        self._file = None
 
     def _reopen_if_needed(self):
-        p = log_path_for_today()
-        if p != self._path:
-            if self._fp:
-                self._fp.close()
-            self._path = p
-            self._fp = open(self._path, "a", encoding="utf-8")
+        path = log_path_for_today()
+        if path != self._path:
+            if self._file:
+                self._file.close()
+            self._path = path
+            self._file = open(self._path, "a", encoding="utf-8")
 
     def write(self, line: str):
         self._reopen_if_needed()
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._fp.write(f"{ts} {line.rstrip()}\n")
-        self._fp.flush()
+        log_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._file.write(f"{log_time} {line.rstrip()}\n")
+        self._file.flush()
 
 logger = DailyFileLogger()
 
 def to_dt_utc(entry) -> Optional[datetime]:
-    t = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
-    if not t:
+    parsed_time = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+    if not parsed_time:
         return None
-    return datetime(*t[:6], tzinfo=timezone.utc)
+    return datetime(*parsed_time[:6], tzinfo=timezone.utc)
 
 def fetch_bytes(url: str) -> bytes:
     headers = {
@@ -55,11 +55,11 @@ def fetch_bytes(url: str) -> bytes:
         "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
     }
     with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True, headers=headers) as client:
-        r = client.get(url)
-        r.raise_for_status()
-        return r.content
+        response = client.get(url)
+        response.raise_for_status()
+        return response.content
 
-def process_source(s, source: Source) -> int:
+def process_source(session, source: Source) -> int:
     added = 0
     try:
         raw = fetch_bytes(source.rss_url)
@@ -90,7 +90,7 @@ def process_source(s, source: Source) -> int:
             logger.write(f"[WARN] Skip incomplete item from {source.rss_url} (title/link/guid missing)")
             continue
 
-        exists = s.scalar(
+        exists = session.scalar(
             select(Article.id)
             .where(
                 (Article.source_id == source.id)
@@ -102,7 +102,7 @@ def process_source(s, source: Source) -> int:
             continue
 
         now_utc = datetime.now(timezone.utc)
-        art = Article(
+        article = Article(
             source_id=source.id,
             title=title,
             link=link,
@@ -112,14 +112,14 @@ def process_source(s, source: Source) -> int:
             fetched_at=now_utc,
         )
         try:
-            s.add(art)
+            session.add(article)
             added += 1
-            s.commit()
+            session.commit()
             logger.write(f"[ADD] Source={source.name!r} Title={title!r}")
         except IntegrityError:
-            s.rollback()
+            session.rollback()
         except Exception as e:
-            s.rollback()
+            session.rollback()
             logger.write(f"[ERROR] DB insert failed for source {source.name!r}: {e}")
 
     return added
