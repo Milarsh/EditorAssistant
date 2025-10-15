@@ -12,6 +12,9 @@ from src.db.models.article import Article
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
 # -------- утилиты JSON --------
 def json_bytes(data) -> bytes:
     return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
@@ -27,43 +30,57 @@ def parse_json_body(handler: BaseHTTPRequestHandler):
         raise ValidationError("Invalid JSON body")
 
 # -------- Ошибки --------
+@dataclass(slots=True)
 class ApiError(Exception):
-    status = 500
-    code = "internal_error"
-    def __init__(self, message="Internal error", *, status=None, code=None, details=None):
-        super().__init__(message)
-        if status: self.status = status
-        if code: self.code = code
-        self.details = details or {}
+    message: str = "Internal error"
+    status: int = 500
+    code: str = "internal_error"
+    details: Optional[Dict[str, Any]] = field(default=None)
 
+    def __post_init__(self):
+        super().__init__(self.message)
+
+@dataclass(slots=True)
 class ValidationError(ApiError):
-    def __init__(self, msg="Validation error", details=None):
-        super().__init__(msg, status=400, code="bad_request", details=details)
+    message: str = "Validation error"
+    status: int = 400
+    code: str = "bad_request"
 
+@dataclass(slots=True)
 class NotFound(ApiError):
-    def __init__(self, msg="Not found"):
-        super().__init__(msg, status=404, code="not_found")
+    message: str = "Not found"
+    status: int = 404
+    code: str = "not_found"
 
+@dataclass(slots=True)
 class MethodNotAllowed(ApiError):
-    def __init__(self, msg="Method not allowed"):
-        super().__init__(msg, status=405, code="method_not_allowed")
+    message: str = "Method not allowed"
+    status: int = 405
+    code: str = "method_not_allowed"
 
+@dataclass(slots=True)
 class Conflict(ApiError):
-    def __init__(self, msg="Conflict"):
-        super().__init__(msg, status=409, code="conflict")
+    message: str = "Conflict"
+    status: int = 409
+    code: str = "conflict"
 
+@dataclass(slots=True)
 class TooManyRequests(ApiError):
-    def __init__(self, msg="Rate limit exceeded"):
-        super().__init__(msg, status=429, code="too_many_requests")
+    message: str = "Rate limit exceeded"
+    status: int = 429
+    code: str = "too_many_requests"
 
-# Ошибки домена
+@dataclass(slots=True)
 class SourceError(ApiError):
-    def __init__(self, msg="Source error", details=None):
-        super().__init__(msg, status=400, code="source_error", details=details)
+    message: str = "Source error"
+    status: int = 400
+    code: str = "source_error"
 
+@dataclass(slots=True)
 class ParserError(ApiError):
-    def __init__(self, msg="Parser error", details=None):
-        super().__init__(msg, status=502, code="parser_error", details=details)
+    message: str = "Parser error"
+    status: int = 502
+    code: str = "parser_error"
 
 # -------- Rate Limiting --------
 RATE_LIMIT = int(os.getenv("RATE_LIMIT", "60"))         # запросов
@@ -185,7 +202,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             if not rss_url or not (rss_url.startswith("http://") or rss_url.startswith("https://")):
                 errors["rss_url"] = "Must be valid http(s) URL"
             if errors:
-                raise ValidationError("Invalid fields", errors)
+                raise ValidationError("Invalid fields", details=errors)
 
             with SessionLocal() as session:
                 try:
@@ -205,7 +222,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 obj = session.get(Source, source_id)
                 if not obj:
                     raise NotFound("Source not found")
-                session.delete(obj);
+                session.delete(obj)
                 session.commit()
                 self._json_ok({"status": "deleted", "id": source_id})
 
