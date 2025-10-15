@@ -265,6 +265,6 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
     print(f"Server listening on {host}:{port}")
     httpd.serve_forever()
 
-def main():
+def server_init():
     port = int(os.getenv("PORT", "8000"))
     run_server(port=port)
