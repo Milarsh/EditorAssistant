@@ -5,7 +5,7 @@ from typing import Optional
 
 import httpx
 import feedparser
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 
 from .db import SessionLocal
@@ -19,7 +19,7 @@ def ensure_log_dir():
     os.makedirs(LOG_DIR, exist_ok=True)
 
 def log_path_for_today() -> str:
-    return os.path.join(LOG_DIR, datetime.utcnow().strftime("parser_%Y-%m_%d.log"))
+    return os.path.join(LOG_DIR, datetime.now(timezone.utc).strftime("parser_%Y-%m_%d.log"))
 
 class DailyFileLogger:
     def __init__(self):
@@ -89,6 +89,17 @@ def process_source(s, source: Source) -> int:
             logger.write(f"[WARN] Skip incomplete item from {source.rss_url} (title/link/guid missing)")
             continue
 
+        exists = s.scalar(
+            select(Article.id)
+            .where(
+                (Article.source_id == source.id)
+                & (or_(Article.guid == guid, Article.link == link))
+            )
+            .limit(1)
+        )
+        if exists:
+            continue
+
         now_utc = datetime.now(timezone.utc)
         art = Article(
             source_id=source.id,
@@ -101,8 +112,8 @@ def process_source(s, source: Source) -> int:
         )
         try:
             s.add(art)
-            s.commit()
             added += 1
+            s.commit()
             logger.write(f"[ADD] Source={source.name!r} Title={title!r}")
         except IntegrityError:
             s.rollback()
