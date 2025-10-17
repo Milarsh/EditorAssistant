@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,36 +11,7 @@ from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
 
-LOG_DIR = os.path.abspath(os.getenv("LOG_DIR", "./log"))
 FETCH_TIMEOUT = float(os.getenv("FETCH_TIMEOUT", "10.0"))
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
-
-def ensure_log_dir():
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-def log_path_for_today() -> str:
-    return os.path.join(LOG_DIR, datetime.now(timezone.utc).strftime("parser_%Y-%m_%d.log"))
-
-class DailyFileLogger:
-    def __init__(self):
-        self._path = None
-        self._file = None
-
-    def _reopen_if_needed(self):
-        path = log_path_for_today()
-        if path != self._path:
-            if self._file:
-                self._file.close()
-            self._path = path
-            self._file = open(self._path, "a", encoding="utf-8")
-
-    def write(self, line: str):
-        self._reopen_if_needed()
-        log_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._file.write(f"{log_time} {line.rstrip()}\n")
-        self._file.flush()
-
-logger = DailyFileLogger()
 
 def to_dt_utc(entry) -> Optional[datetime]:
     parsed_time = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
@@ -59,7 +29,15 @@ def fetch_bytes(url: str) -> bytes:
         response.raise_for_status()
         return response.content
 
-def process_source(session, source: Source) -> int:
+def is_rss_source(source) -> bool:
+    if not (source.enabled and source.rss_url):
+        return False
+    url = source.rss_url.lower()
+    if "vk.com" in url or "t.me" in url or "telegram.me" in url:
+        return False
+    return True
+
+def process_source(session, source, logger) -> int:
     added = 0
     try:
         raw = fetch_bytes(source.rss_url)
@@ -124,29 +102,16 @@ def process_source(session, source: Source) -> int:
 
     return added
 
-def full_cycle():
-    ensure_log_dir()
-    start = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logger.write(f"[CYCLE-START] {start}")
-
+def run_rss_cycle(logger) -> int:
     total_added = 0
-    with SessionLocal() as s:
-        sources = s.execute(select(Source).where(Source.enabled == True)).scalars().all()
-        for src in sources:
+    with SessionLocal() as session:
+        sources = session.execute(select(Source).where(Source.enabled == True)).scalars().all()
+        for source in sources:
+            if not is_rss_source(source):
+                continue
             try:
-                total_added += process_source(s, src)
+                total_added += process_source(session, source, logger)
             except Exception as e:
-                logger.write(f"[ERROR] Unexpected error for source {src.rss_url}: {e}")
+                logger.write(f"[ERROR] Unexpected error for source {source.rss_url}: {e}")
 
-    end = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logger.write(f"[CYCLE-END] {end} added={total_added}")
-
-def main():
-    logger.write("[PARSER] RSS parser started")
-    interval = POLL_INTERVAL
-    while True:
-        full_cycle()
-        time.sleep(interval)
-
-if __name__ == "__main__":
-    main()
+    return total_added
