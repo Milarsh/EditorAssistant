@@ -1,26 +1,23 @@
 openapi: 3.0.3
 info:
   title: Editor Assistant API
-  version: 0.1.0
-  description: >
-    Базовое API бэкенда. Возвращает JSON и предсказуемые ошибки.
-    Временные метки — в UTC
+  version: 1.0.0
+  description: Позволяет получать новости и их источники в формате JSON, проверять состояние сервиса.
 
 servers:
   - url: http://localhost:8000
-    description: Local
+    description: Локальный сервер
 
 tags:
   - name: Health
   - name: Sources
   - name: Articles
-  - name: Placeholders
 
 paths:
   /healthz:
     get:
       tags: [Health]
-      summary: Health check
+      summary: Проверка состояния сервиса
       responses:
         '200':
           description: OK
@@ -48,7 +45,7 @@ paths:
                       name: Example
                       rss_url: https://example.com/rss.xml
                       enabled: true
-                      created_at: '2025-10-10T09:20:17Z'
+                      created_at: "2025-10-10 09:20:17.403888"
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -111,7 +108,7 @@ paths:
   /api/articles:
     get:
       tags: [Articles]
-      summary: Список статей
+      summary: Список новостей
       parameters:
         - $ref: '#/components/parameters/SourceId'
         - $ref: '#/components/parameters/Q'
@@ -137,9 +134,8 @@ paths:
                         link: https://example.com/news/1
                         description: Full text
                         guid: guid-1
-                        published_at: '2025-10-10T10:05:51Z'
-                        fetched_at: '2025-10-10T09:20:17Z'
-                        lang: ru
+                        published_at: "2025-10-10 10:05:51.064905"
+                        fetched_at: "2025-10-10 09:20:17.403888"
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -148,7 +144,7 @@ paths:
   /api/articles/{id}:
     get:
       tags: [Articles]
-      summary: Получить статью по id
+      summary: Получить новость по id
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -164,34 +160,6 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
-  /api/stopwords:
-    get:
-      tags: [Placeholders]
-      summary: Заглушка (будет реализовано позже)
-      responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-    post:
-      tags: [Placeholders]
-      summary: Заглушка (будет реализовано позже)
-      responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-
-  /api/categories:
-    get:
-      tags: [Placeholders]
-      summary: Заглушка (будет реализовано позже)
-      responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-    post:
-      tags: [Placeholders]
-      summary: Заглушка (будет реализовано позже)
-      responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
 
 components:
   parameters:
@@ -279,8 +247,7 @@ components:
         enabled: { type: boolean }
         created_at:
           type: string
-          format: date-time
-          description: UTC
+          description: UTC строка в формате "YYYY-MM-DD HH:MM:SS[.ffffff]"
 
     SourcesList:
       type: array
@@ -299,17 +266,11 @@ components:
         guid: { type: string }
         published_at:
           type: string
-          format: date-time
           nullable: true
-          description: UTC
+          description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
         fetched_at:
           type: string
-          format: date-time
-          description: UTC
-        lang:
-          type: string
-          nullable: true
-          description: ISO 639-1 (напр., "ru")
+          description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
 
     ArticlesList:
       type: object
@@ -329,28 +290,71 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            sample:
+              value:
+                error:
+                  code: bad_request
+                  message: "Invalid fields"
+                  request_id: "1730000000-1"
+                  details: { field: "Required" }
     NotFound:
       description: Не найдено
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            sample:
+              value:
+                error:
+                  code: not_found
+                  message: "Resource not found"
+                  request_id: "1730000000-2"
     Conflict:
       description: Конфликт (например, дубликат rss_url)
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            sample:
+              value:
+                error:
+                  code: conflict
+                  message: "rss_url already exists"
+                  request_id: "1730000000-3"
     TooManyRequests:
       description: Превышен лимит запросов
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
-    NotImplemented:
-      description: Не реализовано (заглушка)
+          examples:
+            sample:
+              value:
+                error:
+                  code: too_many_requests
+                  message: "Too many requests: limit 60 per 60s"
+                  request_id: "1730000000-4"
+    MethodNotAllowed:
+      description: Метод не поддерживается
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            sample:
+              value:
+                error:
+                  code: method_not_allowed
+                  message: "Method not allowed"
+                  request_id: "1730000000-5"
     InternalError:
       description: Внутренняя ошибка
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            sample:
+              value:
+                error:
+                  code: internal_error
+                  message: "Internal server error"
+                  request_id: "1730000000-6"
