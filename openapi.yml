@@ -3,20 +3,18 @@ info:
   title: Editor Assistant API
   version: 1.0.0
   description: Позволяет получать новости и их источники в формате JSON, проверять состояние сервиса.
-
 servers:
-  - url: http://localhost:8000
-    description: Локальный сервер
-
+- url: http://localhost:8000
+  description: Локальный сервер
 tags:
-  - name: Health
-  - name: Sources
-  - name: Articles
-
+- name: Health
+- name: Sources
+- name: Articles
 paths:
   /healthz:
     get:
-      tags: [Health]
+      tags:
+      - Health
       summary: Проверка состояния сервиса
       responses:
         '200':
@@ -26,10 +24,10 @@ paths:
               schema:
                 type: string
                 example: OK
-
   /api/sources:
     get:
-      tags: [Sources]
+      tags:
+      - Sources
       summary: Список источников
       responses:
         '200':
@@ -41,18 +39,18 @@ paths:
               examples:
                 ok:
                   value:
-                    - id: 1
-                      name: Example
-                      rss_url: https://example.com/rss.xml
-                      enabled: true
-                      created_at: "2025-10-10 09:20:17.403888"
+                  - id: 1
+                    name: Example
+                    rss_url: https://example.com/rss.xml
+                    enabled: true
+                    created_at: '2025-10-10T09:20:17Z'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
     post:
-      tags: [Sources]
+      tags:
+      - Sources
       summary: Добавить источник
       requestBody:
         required: true
@@ -81,13 +79,13 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /api/sources/{id}:
     delete:
-      tags: [Sources]
+      tags:
+      - Sources
       summary: Удалить источник
       parameters:
-        - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Id'
       responses:
         '200':
           description: Удалено
@@ -96,24 +94,28 @@ paths:
               schema:
                 type: object
                 properties:
-                  status: { type: string, example: deleted }
-                  id: { type: integer, example: 1 }
+                  status:
+                    type: string
+                    example: deleted
+                  id:
+                    type: integer
+                    example: 1
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /api/articles:
     get:
-      tags: [Articles]
+      tags:
+      - Articles
       summary: Список новостей
       parameters:
-        - $ref: '#/components/parameters/SourceId'
-        - $ref: '#/components/parameters/Q'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Offset'
+      - $ref: '#/components/parameters/SourceId'
+      - $ref: '#/components/parameters/Q'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Offset'
       responses:
         '200':
           description: Успешно
@@ -128,25 +130,25 @@ paths:
                     limit: 5
                     offset: 0
                     items:
-                      - id: 1
-                        source_id: 2
-                        title: Test news
-                        link: https://example.com/news/1
-                        description: Full text
-                        guid: guid-1
-                        published_at: "2025-10-10 10:05:51.064905"
-                        fetched_at: "2025-10-10 09:20:17.403888"
+                    - id: 1
+                      source_id: 2
+                      title: Test news
+                      link: https://example.com/news/1
+                      description: Full text
+                      guid: guid-1
+                      published_at: '2025-10-10T10:05:51Z'
+                      fetched_at: '2025-10-10T09:20:17Z'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /api/articles/{id}:
     get:
-      tags: [Articles]
+      tags:
+      - Articles
       summary: Получить новость по id
       parameters:
-        - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Id'
       responses:
         '200':
           description: Найдено
@@ -160,59 +162,74 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
 components:
   parameters:
     Id:
       name: id
       in: path
       required: true
-      schema: { type: integer, minimum: 1 }
+      schema:
+        type: integer
+        minimum: 1
     SourceId:
       name: source_id
       in: query
       required: false
-      schema: { type: integer, minimum: 1 }
+      schema:
+        type: integer
+        minimum: 1
       description: Фильтр по источнику
     Q:
       name: q
       in: query
       required: false
-      schema: { type: string, maxLength: 200 }
+      schema:
+        type: string
+        maxLength: 200
       description: Поиск по заголовку/описанию (ILIKE)
     Limit:
       name: limit
       in: query
       required: false
-      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
     Offset:
       name: offset
       in: query
       required: false
-      schema: { type: integer, minimum: 0, default: 0 }
-
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
   schemas:
     Error:
       type: object
-      required: [error]
+      required:
+      - error
       properties:
         error:
           type: object
-          required: [code, message, request_id]
+          required:
+          - code
+          - message
+          - request_id
           properties:
             code:
               type: string
               description: Машинно-читабельный код ошибки
               enum:
-                - bad_request
-                - not_found
-                - conflict
-                - too_many_requests
-                - method_not_allowed
-                - not_implemented
-                - internal_error
-                - source_error
-                - parser_error
+              - bad_request
+              - not_found
+              - conflict
+              - too_many_requests
+              - method_not_allowed
+              - not_implemented
+              - internal_error
+              - source_error
+              - parser_error
               example: bad_request
             message:
               type: string
@@ -223,12 +240,15 @@ components:
             details:
               type: object
               additionalProperties: true
-
     SourceCreate:
       type: object
-      required: [name, rss_url]
+      required:
+      - name
+      - rss_url
       properties:
-        name: { type: string, minLength: 1 }
+        name:
+          type: string
+          minLength: 1
         rss_url:
           type: string
           format: uri
@@ -236,34 +256,55 @@ components:
         enabled:
           type: boolean
           default: true
-
     Source:
       type: object
-      required: [id, name, rss_url, enabled, created_at]
+      required:
+      - id
+      - name
+      - rss_url
+      - enabled
+      - created_at
       properties:
-        id: { type: integer }
-        name: { type: string }
-        rss_url: { type: string, format: uri }
-        enabled: { type: boolean }
+        id:
+          type: integer
+        name:
+          type: string
+        rss_url:
+          type: string
+          format: uri
+        enabled:
+          type: boolean
         created_at:
           type: string
           description: UTC строка в формате "YYYY-MM-DD HH:MM:SS[.ffffff]"
-
     SourcesList:
       type: array
       items:
         $ref: '#/components/schemas/Source'
-
     Article:
       type: object
-      required: [id, source_id, title, link, guid, fetched_at]
+      required:
+      - id
+      - source_id
+      - title
+      - link
+      - guid
+      - fetched_at
       properties:
-        id: { type: integer }
-        source_id: { type: integer }
-        title: { type: string }
-        link: { type: string, format: uri }
-        description: { type: string, nullable: true }
-        guid: { type: string }
+        id:
+          type: integer
+        source_id:
+          type: integer
+        title:
+          type: string
+        link:
+          type: string
+          format: uri
+        description:
+          type: string
+          nullable: true
+        guid:
+          type: string
         published_at:
           type: string
           nullable: true
@@ -271,90 +312,102 @@ components:
         fetched_at:
           type: string
           description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
-
     ArticlesList:
       type: object
-      required: [total, limit, offset, items]
+      required:
+      - total
+      - limit
+      - offset
+      - items
       properties:
-        total: { type: integer }
-        limit: { type: integer }
-        offset: { type: integer }
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
         items:
           type: array
           items:
             $ref: '#/components/schemas/Article'
-
   responses:
     BadRequest:
       description: Неверные данные
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: bad_request
-                  message: "Invalid fields"
-                  request_id: "1730000000-1"
-                  details: { field: "Required" }
+                  message: Invalid fields
+                  request_id: 1730000000-1
+                  details:
+                    field: Required
     NotFound:
       description: Не найдено
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: not_found
-                  message: "Resource not found"
-                  request_id: "1730000000-2"
+                  message: Resource not found
+                  request_id: 1730000000-2
     Conflict:
       description: Конфликт (например, дубликат rss_url)
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: conflict
-                  message: "rss_url already exists"
-                  request_id: "1730000000-3"
+                  message: rss_url already exists
+                  request_id: 1730000000-3
     TooManyRequests:
       description: Превышен лимит запросов
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: too_many_requests
-                  message: "Too many requests: limit 60 per 60s"
-                  request_id: "1730000000-4"
+                  message: 'Too many requests: limit 60 per 60s'
+                  request_id: 1730000000-4
     MethodNotAllowed:
       description: Метод не поддерживается
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: method_not_allowed
-                  message: "Method not allowed"
-                  request_id: "1730000000-5"
+                  message: Method not allowed
+                  request_id: 1730000000-5
     InternalError:
       description: Внутренняя ошибка
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: internal_error
-                  message: "Internal server error"
-                  request_id: "1730000000-6"
+                  message: Internal server error
+                  request_id: 1730000000-6

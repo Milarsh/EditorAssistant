@@ -17,7 +17,13 @@ from typing import Any, Dict, Optional
 
 # -------- утилиты JSON --------
 def json_bytes(data) -> bytes:
-    return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+    def _default(value):
+        if isinstance(value, datetime):
+            dt = value if value.tzinfo is not None else value.replace(tzinfo = timezone.utc)
+            s = dt.isoformat(timespec="seconds")
+            return s[:-6] + "Z" if s.endswith("+00:00") else s
+        return str(value)
+    return json.dumps(data, ensure_ascii=False, default=_default).encode("utf-8")
 
 def parse_json_body(handler: BaseHTTPRequestHandler):
     length = int(handler.headers.get("Content-Length", 0) or 0)
