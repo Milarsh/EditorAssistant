@@ -15,6 +15,18 @@ from sqlalchemy.exc import IntegrityError
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from pathlib import Path
+import mimetypes
+
+MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
+
+def _safe_join(base: str, *parts: str) -> Path:
+    base_path = Path(base).resolve()
+    full = base_path.joinpath(*parts).resolve()
+    if not str(full).startswith(str(base_path)):
+        raise ValueError("Unsafe path")
+    return full
+
 # -------- утилиты JSON --------
 def json_bytes(data) -> bytes:
     def _default(value):
@@ -121,11 +133,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             # articles
             ("GET",  re.compile(r"^/api/articles$"),          "list_articles"),
             ("GET",  re.compile(r"^/api/articles/(\d+)$"),    "get_article"),
-            # стоп-слова и категории
-            ("GET", re.compile(r"^/api/stopwords$"), "stopwords_placeholder"),
-            ("POST", re.compile(r"^/api/stopwords$"), "stopwords_placeholder"),
-            ("GET", re.compile(r"^/api/categories$"), "stopwords_placeholder"),
-            ("POST", re.compile(r"^/api/categories$"), "stopwords_placeholder"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
+            # media (local)
+            ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
         ]
 
         def do_GET(self): self._dispatch("GET")
@@ -281,6 +291,83 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "published_at": article.published_at,
                     "fetched_at": article.fetched_at,
                 })
+
+        def get_article_media(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
+                    raise NotFound("Article not found")
+
+                assets = []
+
+                try:
+                    if article.guid and article.guid.startswith("vk:"):
+                        _, owner_str, post_str = article.guid.split(":", 2)
+
+                        found_dir = None
+                        dir = _safe_join(MEDIA_DIR, "vk", owner_str, post_str)
+                        if dir.exists() and dir.is_dir():
+                            found_dir = dir
+
+                        if found_dir:
+                            for path in sorted(found_dir.iterdir()):
+                                if not path.is_file():
+                                    continue
+                                if path.name == "media.json":
+                                    continue
+                                rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
+                                file_url = f"/media/{rel}"
+                                mime, _ = mimetypes.guess_type(path.name)
+                                type = "image" if (mime or "").startswith("image/") else "file"
+                                assets.append({
+                                    "type": type,
+                                    "file_url": file_url,
+                                    "mime": mime or "application/octet-stream",
+                                    "name": path.name,
+                                })
+
+                            manifest_path = found_dir / "media.json"
+                            if manifest_path.exists():
+                                try:
+                                    meta = json.loads(manifest_path.read_text(encoding="utf-8"))
+                                    for it in meta:
+                                        if it.get("type") == "video":
+                                            assets.append({
+                                                "type": "video",
+                                                "page_url": it.get("page_url"),
+                                                "embed_url": it.get("embed_url"),
+                                                "poster": it.get("poster"),
+                                            })
+                                except Exception as exception:
+                                    print(f"[WARN] bad media.json for article {article_id}: {exception}")
+
+                except Exception as exception:
+                    print(f"[ERROR] assets for article {article_id}: {exception}")
+
+                self._json_ok({"id": article_id, "assets": assets})
+
+        # Media (Local)
+        def serve_media(self, match, query):
+            rel_path = match.group(1)
+            try:
+                fs_path = _safe_join(MEDIA_DIR, rel_path)
+                if not fs_path.exists() or not fs_path.is_file():
+                    return self._json_error(404, "not_found", "Media file not found")
+                mime, _ = mimetypes.guess_type(str(fs_path))
+                mime = mime or "application/octet-stream"
+                with open(fs_path, "rb") as file:
+                    data = file.read()
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except ValueError:
+                return self._json_error(400, "bad_request", "Invalid media path")
+            except Exception as exception:
+                print(f"[ERROR] GET /media/{rel_path}: {exception}")
+                return self._json_error(500, "internal_error", "Internal server error")
 
         # ---- заглушка ----
         def not_impl(self, match, query):

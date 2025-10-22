@@ -8,6 +8,8 @@ services:
     command: ["python", "-m", "assistant"]
     volumes:
       - ./src:/app/src:ro
+      - ./log:/app/log
+      - ./media:/app/media
     ports:
       - "8000:8000"
     depends_on:
@@ -45,6 +47,7 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./log:/app/log
+      - ./media:/app/media
 
 volumes:
   dbdata:

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from src.assistant.vk_parser import run_vk_cycle
 from src.assistant.rss_parser import run_rss_cycle
 
-LOG_DIR = os.path.abspath(os.getenv("LOG_DIR", "./log"))
+LOG_DIR = "./log"
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 
 def ensure_log_dir():

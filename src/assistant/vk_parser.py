@@ -12,11 +12,122 @@ from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
 
+from pathlib import Path
+import json
+
+MEDIA_DIR = "./media"
+
 VK_TOKEN = os.getenv("VK_TOKEN", "")
 VK_API_VERSION = os.getenv("VK_API_VERSION", "5.131")
 VK_THROTTLE_SEC = float(os.getenv("VK_THROTTLE_SEC", "0.35"))
 
 FETCH_TIMEOUT = float(os.getenv("FETCH_TIMEOUT", "10.0"))
+
+def _ensure_dir(path: Path):
+    path.mkdir(parents=True, exist_ok=True)
+
+def _best_photo_url(photo: dict) -> str | None:
+    sizes = photo.get("sizes") or []
+    best = None
+    best_width = -1
+    for size in sizes:
+        width = int(size.get("width") or 0)
+        if width > best_width and size.get("url"):
+            best_width = width
+            best = size["url"]
+    return best
+
+def _best_image_url(images: list[dict]) -> str | None:
+    best = None
+    best_width = -1
+    for image in images or []:
+        width = int(image.get("width") or 0)
+        if image.get("url") and width > best_width:
+            best_width = width
+            best = image["url"]
+    return best
+
+
+def _download_file(client: httpx.Client, url: str, dest: Path) -> bool:
+    try:
+        response = client.get(url, timeout=FETCH_TIMEOUT)
+        response.raise_for_status()
+        dest.write_bytes(response.content)
+        return True
+    except Exception:
+        return False
+    
+def _save_manifest(dir_path: Path, entries: list[dict]):
+    try:
+        (dir_path / "media.json").write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) -> list[str]:
+    post_id = post.get("id")
+    if not post_id:
+        return []
+    
+    dest_dir = Path(MEDIA_DIR) / "vk" / str(owner_id) / str(post_id)
+    _ensure_dir(dest_dir)
+
+    rel_urls: list[str] = []
+    manifest: list[dict] = []
+
+    attachments = post.get("attachments") or []
+    photo_index = 0
+    doc_index = 0
+
+    for attachment in attachments:
+        type = attachment.get("type")
+        obj = attachment.get(type) or {}
+        if type == "photo":
+            url = _best_photo_url(obj)
+            if not url:
+                continue
+            photo_index += 1
+            file_name = f"photo_{photo_index}.jpg"
+            if _download_file(client, url, dest_dir / file_name):
+                rel = Path("vk") / str(owner_id) / str(post_id) / file_name
+                rel_urls.append(f"/media/{rel.as_posix()}")
+                manifest.append({"type": "photo", "file": file_name, "src": url})
+        elif type == "doc":
+            file_url = obj.get("url")
+            ext = (obj.get("ext") or "bin").split("?")[0][:8]
+            doc_index += 1
+            file_name = f"doc_{doc_index}.{ext}"
+            if file_url and _download_file(client, file_url, dest_dir / file_name):
+                rel = Path("vk") / str(owner_id) / str(post_id) / file_name
+                rel_urls.append(f"/media/{rel.as_posix()}")
+                manifest.append({"type": "doc", "file": file_name, "src": file_url})
+        elif type == "video":
+            owner = obj.get("owner_id")
+            video = obj.get("id")
+            if owner is not None and video is not None:
+                page_url = f"https://vk.com/video{owner}_{video}"
+                embed_url = f"https://vk.com/video_ext.php?oid={owner}&id={video}&hd=2"
+                poster_local = None
+                poster_url = None
+                if isinstance(obj.get("image"), list) and obj["image"]:
+                    poster_url = _best_image_url(obj["image"])
+                elif isinstance(obj.get("first_frame"), list) and obj["first_frame"]:
+                    poster_url = _best_image_url(obj["first_frame"])
+                if poster_url:
+                    file_name = "video_poster.jpg"
+                    if _download_file(client, poster_url, dest_dir / file_name):
+                        rel = Path("vk") / str(owner_id) / str(post_id) / file_name
+                        poster_local = f"/media/{rel.as_posix()}"
+                manifest.append({
+                    "type": "video", 
+                    "page_url": page_url,
+                    "embed_url": embed_url,
+                    "poster": poster_local or poster_url,
+                    "owner_id": owner,
+                    "video_id": video,
+                    })
+
+    _save_manifest(dest_dir, manifest)
+    return rel_urls
 
 def _sleep_throttle():
     time.sleep(VK_THROTTLE_SEC)
@@ -129,6 +240,11 @@ def process_vk_source(session, source, logger) -> int:
         if res.rowcount:
             added += 1
             logger.write(f"[ADD] VK Source={source.name!r} Title={title!r}")
+            try:
+                with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True) as client:
+                    download_vk_media_for_post(post, owner_id, client)
+            except Exception as exception:
+                logger.write(f"[WARN] VK media download failed for post {owner_id}_{post_id}: {exception}")
 
     if added:
         session.commit()

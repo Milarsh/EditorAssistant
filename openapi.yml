@@ -10,6 +10,7 @@ tags:
 - name: Health
 - name: Sources
 - name: Articles
+- name: Media
 paths:
   /healthz:
     get:
@@ -162,6 +163,51 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/articles/{id}/media:
+    get:
+      tags:
+      - Articles
+      summary: Медиа-данные статьи (локальные файлы и данные о видео)
+      description: |
+        Возвращает список медиа (assets) для статьи.  
+        Локальные файлы (картинки/документы) отдаются через `/media/...`.  
+        Видео — внешние ссылки/встраиваемый плеер VK.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Список медиа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleAssetsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /media/{path}:
+    get:
+      tags:
+      - Media
+      summary: Выдача локальных медиафайлов
+      parameters:
+        - in: path
+          name: path
+          required: true
+          schema: { type: string }
+          description: Относительный путь внутри каталога media (например, `vk/-40316705/54155576/photo_1.jpg`)
+      responses:
+        '200':
+          description: Файл
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '400':
+            $ref: '#/components/responses/BadRequest'
+        '404':
+            $ref: '#/components/responses/NotFound'
+
+
 components:
   parameters:
     Id:
@@ -330,6 +376,71 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Article'
+    ArticleAssetsResponse:
+      type: object
+      required: [id, assets]
+      properties:
+        id: { type: integer, example: 327 }
+        assets:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/AssetImage'
+              - $ref: '#/components/schemas/AssetFile'
+              - $ref: '#/components/schemas/AssetVideo'
+    AssetImage:
+      type: object
+      required: [type, file_url, mime, name]
+      properties:
+        type:
+          type: string
+          enum: [image]
+        file_url:
+          type: string
+          description: Локальный URL до файла
+          example: /media/vk/-40316705/54155576/photo_1.jpg
+        mime:
+          type: string
+          example: image/jpeg
+        name:
+          type: string
+          example: photo_1.jpg
+    AssetFile:
+      type: object
+      required: [type, file_url, mime, name]
+      properties:
+        type:
+          type: string
+          enum: [file]
+        file_url:
+          type: string
+          example: /media/vk/-40316705/54155576/doc_1.pdf
+        mime:
+          type: string
+          example: application/pdf
+        name:
+          type: string
+          example: doc_1.pdf
+    AssetVideo:
+      type: object
+      required: [type, embed_url]
+      properties:
+        type:
+          type: string
+          enum: [video]
+        embed_url:
+          type: string
+          description: Встраиваемый плеер VK
+          example: https://vk.com/video_ext.php?oid=-40316705&id=54155576&hd=2
+        page_url:
+          type: string
+          description: Страница видео VK
+          example: https://vk.com/video-40316705_54155576
+        poster:
+          type: string
+          nullable: true
+          description: URL постера (обычно локальный `/media/...`), если сохранён
+          example: /media/vk/-40316705/54155576/video_poster.jpg
   responses:
     BadRequest:
       description: Неверные данные
