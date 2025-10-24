@@ -106,22 +106,10 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) 
             if owner is not None and video is not None:
                 page_url = f"https://vk.com/video{owner}_{video}"
                 embed_url = f"https://vk.com/video_ext.php?oid={owner}&id={video}&hd=2"
-                poster_local = None
-                poster_url = None
-                if isinstance(obj.get("image"), list) and obj["image"]:
-                    poster_url = _best_image_url(obj["image"])
-                elif isinstance(obj.get("first_frame"), list) and obj["first_frame"]:
-                    poster_url = _best_image_url(obj["first_frame"])
-                if poster_url:
-                    file_name = "video_poster.jpg"
-                    if _download_file(client, poster_url, dest_dir / file_name):
-                        rel = Path("vk") / str(owner_id) / str(post_id) / file_name
-                        poster_local = f"/media/{rel.as_posix()}"
                 manifest.append({
                     "type": "video", 
                     "page_url": page_url,
                     "embed_url": embed_url,
-                    "poster": poster_local or poster_url,
                     "owner_id": owner,
                     "video_id": video,
                     })
