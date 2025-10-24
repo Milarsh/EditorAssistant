@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from src.assistant.vk_parser import run_vk_cycle
 from src.assistant.rss_parser import run_rss_cycle
+from src.assistant.tg_parser import run_tg_cycle
 
 LOG_DIR = "./log"
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
@@ -45,6 +46,7 @@ def run_cycle():
     total_added = 0
     total_added += run_vk_cycle(logger)
     total_added += run_rss_cycle(logger)
+    total_added += run_tg_cycle(logger)
 
     end = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     logger.write(f"[CYCLE-END] {end} added={total_added}")

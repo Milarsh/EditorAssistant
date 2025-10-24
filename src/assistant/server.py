@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 
 from pathlib import Path
 import mimetypes
+from urllib.parse import unquote
 
 MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
 
@@ -337,10 +338,30 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                                                 "type": "video",
                                                 "page_url": it.get("page_url"),
                                                 "embed_url": it.get("embed_url"),
-                                                "poster": it.get("poster"),
                                             })
                                 except Exception as exception:
                                     print(f"[WARN] bad media.json for article {article_id}: {exception}")
+                    elif article.guid and article.guid.startswith("tg:"):
+                        _, channel, msg_id = article.guid.split(":", 2)
+                        found_dir = None
+                        dir = _safe_join(MEDIA_DIR, "tg", channel, msg_id)
+                        if dir.exists() and dir.is_dir():
+                            found_dir = dir
+
+                        if found_dir:
+                            for path in sorted(found_dir.iterdir()):
+                                if path.is_file() and path.name != "media.json":
+                                    rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
+                                    mime, _ = mimetypes.guess_type(path.name)
+                                    type = "image" if (mime or "").startswith("image/") else (
+                                        "video" if (mime or "").startswith("video/") else "file"
+                                    )
+                                    assets.append({
+                                        "type": type,
+                                        "file_url": f"/media/{rel}",
+                                        "mime": mime or "application/octet-stream",
+                                        "name": path.name,
+                                    })
 
                 except Exception as exception:
                     print(f"[ERROR] assets for article {article_id}: {exception}")
@@ -351,23 +372,75 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def serve_media(self, match, query):
             rel_path = match.group(1)
             try:
+                rel_path = unquote(rel_path)
+                rel_path = rel_path.lstrip("/").replace("\\", "/")
                 fs_path = _safe_join(MEDIA_DIR, rel_path)
                 if not fs_path.exists() or not fs_path.is_file():
                     return self._json_error(404, "not_found", "Media file not found")
+                file_size = fs_path.stat().st_size
                 mime, _ = mimetypes.guess_type(str(fs_path))
                 mime = mime or "application/octet-stream"
-                with open(fs_path, "rb") as file:
-                    data = file.read()
-                self.send_response(200)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+
+                range = self.headers.get("Range")
+                start, end = 0, file_size - 1
+                status = 200
+                extra_headers = []
+
+                if range and range.startswith("bytes="):
+                    try:
+                        part = range.split("=", 1)[1]
+                        s, _, e = part.partition("-")
+                        if s.strip():
+                            start = max(0, int(s))
+                        if e.strip():
+                            end = min(file_size - 1, int(e))
+                        if start > end:
+                            start, end = 0, file_size - 1
+                        status = 206
+                        extra_headers.extend([
+                            ("Content-Range", f"bytes {start}-{end}/{file_size}"),
+                            ("Accept-Ranges", "bytes"),
+                        ])
+                    except Exception:
+                        start, end = 0, file_size - 1
+                        status = 200
+
+                length = end - start + 1
+
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Type", mime)
+                    self.send_header("Content-Length", str(length))
+                    if status == 206:
+                        pass
+                    self.send_header("Accept-Ranges", "bytes")
+                    for k, v in extra_headers:
+                        self.send_header(k, v)
+                    self.end_headers()
+                    with open(fs_path, "rb") as file:
+                        file.seek(start)
+                        remaining = length
+                        while remaining > 0:
+                            chunk = file.read(min(512 * 1024, remaining))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                except Exception as exception:
+                    print(f"[ERROR] stream media {rel_path}: {exception}")
+                    return
+
             except ValueError:
                 return self._json_error(400, "bad_request", "Invalid media path")
             except Exception as exception:
                 print(f"[ERROR] GET /media/{rel_path}: {exception}")
-                return self._json_error(500, "internal_error", "Internal server error")
+                try:
+                    return self._json_error(500, "internal_error", "Internal server error")
+                except Exception:
+                    return
 
         # ---- заглушка ----
         def not_impl(self, match, query):
