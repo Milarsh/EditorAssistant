@@ -201,7 +201,15 @@ async def _run_tg_cycle_async(logger) -> int:
                 continue
             total += await _process_tg_source(client, source, logger)
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+            try:
+                await asyncio.wait_for(client.disconnected, timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
+            await asyncio.sleep(0)
+        except Exception as exception:
+            logger.write(f"[WARN] TG disconnect cleanup: {exception}")
     return total
 
 def run_tg_cycle(logger) -> int:

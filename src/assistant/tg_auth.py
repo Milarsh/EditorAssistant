@@ -94,6 +94,11 @@ class TelegramAuthManager:
             try:
                 if self._client:
                     await self._client.disconnect()
+                    try:
+                        await asyncio.wait_for(self._client.disconnected, timeout=2.0)
+                    except asyncio.TimeoutError:
+                        pass
+                    await asyncio.sleep(0)
             except Exception:
                 pass
             self._client = None
@@ -114,6 +119,16 @@ class TelegramAuthManager:
                 if await client.is_user_authorized():
                     self._persist_session()
                     self._state = AuthState(status="authorized", user=await self._authorized_user())
+                    try:
+                        await client.disconnect()
+                        try:
+                            await asyncio.wait_for(client.disconnected, timeout=2.0)
+                        except asyncio.TimeoutError:
+                            pass
+                        await asyncio.sleep(0)
+                    except Exception:
+                        pass
+                    self._client = None
                     return self._state
 
                 now = datetime.now(timezone.utc)
