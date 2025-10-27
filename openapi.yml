@@ -11,6 +11,7 @@ tags:
 - name: Sources
 - name: Articles
 - name: Media
+- name: TelegramAuth
 paths:
   /healthz:
     get:
@@ -208,6 +209,91 @@ paths:
         '404':
             $ref: '#/components/responses/NotFound'
 
+  /api/tg/auth/status:
+    get:
+      tags: [ TelegramAuth ]
+      summary: Получить текущий статус авторизации в Telegram
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/tg/auth/qr:
+    post:
+      tags: [ TelegramAuth ]
+      summary: Начать/перегенерировать QR-логин
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force:
+                  type: boolean
+                  description: "Создать новый QR, даже если старый ещё не истёк"
+                  default: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/tg/auth/2fa:
+    post:
+      tags: [ TelegramAuth ]
+      summary: Завершить авторизацию — отправить 2FA-пароль
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ password ]
+              properties:
+                password:
+                  type: string
+                  example: "mysupersecret"
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '400':
+          description: Неверный пароль или некорректное тело запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/tg/auth/logout:
+    post:
+      tags: [ TelegramAuth ]
+      summary: Выйти из Telegram-аккаунта и сбросить сессию
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 
 components:
   parameters:
@@ -442,6 +528,53 @@ components:
           nullable: true
           description: URL постера (обычно локальный `/media/...`), если сохранён
           example: /media/vk/-40316705/54155576/video_poster.jpg
+    TgAuthUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123456789
+        first_name:
+          type: string
+          nullable: true
+          example: Ivan
+        last_name:
+          type: string
+          nullable: true
+          example: Petrov
+        username:
+          type: string
+          nullable: true
+          example: ivanpetrov
+        phone:
+          type: string
+          nullable: true
+          example: "+79990000000"
+    TgAuthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ unauthorized, pending, password_required, authorized, expired, error ]
+          example: pending
+        qr_url:
+          type: string
+          nullable: true
+          description: "Ссылка tg://login?token=..., из которой фронт строит QR"
+          example: "tg://login?token=AAEAAABb..."
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "RFC3339 время истечения QR-токена (UTC)"
+          example: "2025-10-27T12:00:00Z"
+        error:
+          type: string
+          nullable: true
+          example: bad_password
+        user:
+          $ref: '#/components/schemas/TgAuthUser'
+
   responses:
     BadRequest:
       description: Неверные данные

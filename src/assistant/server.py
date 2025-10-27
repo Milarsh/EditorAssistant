@@ -19,6 +19,8 @@ from pathlib import Path
 import mimetypes
 from urllib.parse import unquote
 
+from src.assistant.tg_auth import start_qr_sync, status_sync, submit_password_sync, logout_sync
+
 MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
 
 def _safe_join(base: str, *parts: str) -> Path:
@@ -137,6 +139,11 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
             # media (local)
             ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
+            # telegram auth
+            ("GET", re.compile(r"^/api/tg/auth/status$"), "tg_auth_status"),
+            ("POST", re.compile(r"^/api/tg/auth/qr$"), "tg_auth_start_qr"),
+            ("POST", re.compile(r"^/api/tg/auth/2fa$"), "tg_auth_2fa"),
+            ("POST", re.compile(r"^/api/tg/auth/logout$"), "tg_auth_logout"),
         ]
 
         def do_GET(self): self._dispatch("GET")
@@ -441,6 +448,31 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     return self._json_error(500, "internal_error", "Internal server error")
                 except Exception:
                     return
+
+        # Telegram Auth
+        def tg_auth_status(self, match, query):
+            data = status_sync()
+            self._json_ok(data)
+
+        def tg_auth_start_qr(self, match, query):
+            body = parse_json_body(self) or {}
+            force = bool(body.get("force", False))
+            data = start_qr_sync(force=force)
+            self._json_ok(data)
+
+        def tg_auth_2fa(self, match, query):
+            body = parse_json_body(self) or {}
+            password = (body.get("password") or "").strip()
+            if not password:
+                raise ValidationError("Invalid fields", details={"password": "Required"})
+            data = submit_password_sync(password)
+            if data.get("status") == "password_required" and data.get("error") == "bad_password":
+                return self._json_error(400, "bad_request", "Bad password", {"password": "bad_password"})
+            self._json_ok(data)
+
+        def tg_auth_logout(self, match, query):
+            data = logout_sync()
+            self._json_ok(data)
 
         # ---- заглушка ----
         def not_impl(self, match, query):
