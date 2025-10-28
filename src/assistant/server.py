@@ -6,7 +6,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from collections import deque, defaultdict
 
-from src.assistant.rss_parser import is_rss_source
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article

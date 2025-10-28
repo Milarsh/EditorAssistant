@@ -25,12 +25,6 @@ TG_FETCH_LIMIT = int(os.getenv("TG_FETCH_LIMIT", "100"))
 TG_SLEEP_ON_FLOOD = int(os.getenv("TG_SLEEP_ON_FLOOD", "60"))
 MEDIA_DIR = "./media"
 
-def _is_tg_source(source: Source) -> bool:
-    if not (source.enabled and source.rss_url):
-        return False
-    url = source.rss_url.lower()
-    return ("t.me/" in url) or ("telegram.me/" in url) or url.startswith("tg://")
-
 def _channel_from_url(url: str) -> Optional[str]:
     url = (url or "").strip()
     for prefix in ("https://t.me/", "http://t.me/", "https://telegram.me/", "http://telegram.me/"):
@@ -197,7 +191,7 @@ async def _run_tg_cycle_async(logger) -> int:
         with SessionLocal() as session:
             sources = session.execute(select(Source).where(Source.enabled == True)).scalars().all()
         for source in sources:
-            if not _is_tg_source(source):
+            if source.type != "tg" or not source.enabled:
                 continue
             total += await _process_tg_source(client, source, logger)
     finally:

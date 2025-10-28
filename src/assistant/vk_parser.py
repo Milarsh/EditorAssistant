@@ -164,10 +164,6 @@ def owner_id_from_url(url: str) -> int:
         raise RuntimeError(f"Unsupported VK type '{vk_type}' for '{url}'")
     return -object_id
 
-def is_vk_source(src: Source) -> bool:
-    return bool(src.enabled and src.rss_url and "vk.com" in src.rss_url)
-
-
 def fetch_wall(owner_id: int, count: int = 100) -> list[dict]:
     response = _vk_call("wall.get", {"owner_id": owner_id, "count": count, "filter": "owner"})
     _sleep_throttle()
@@ -243,7 +239,7 @@ def run_vk_cycle(logger) -> int:
     with SessionLocal() as session:
         sources = session.execute(select(Source).where(Source.enabled == True)).scalars().all()
         for source in sources:
-            if not is_vk_source(source):
+            if source.type != "vk" or not source.enabled:
                 continue
             try:
                 total_added += process_vk_source(session, source, logger)

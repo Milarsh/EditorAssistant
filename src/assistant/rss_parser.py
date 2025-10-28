@@ -29,14 +29,6 @@ def fetch_bytes(url: str) -> bytes:
         response.raise_for_status()
         return response.content
 
-def is_rss_source(source) -> bool:
-    if not (source.enabled and source.rss_url):
-        return False
-    url = source.rss_url.lower()
-    if "vk.com" in url or "t.me" in url or "telegram.me" in url:
-        return False
-    return True
-
 def process_source(session, source, logger) -> int:
     added = 0
     try:
@@ -107,7 +99,7 @@ def run_rss_cycle(logger) -> int:
     with SessionLocal() as session:
         sources = session.execute(select(Source).where(Source.enabled == True)).scalars().all()
         for source in sources:
-            if not is_rss_source(source):
+            if source.type != "rss" or not source.enabled:
                 continue
             try:
                 total_added += process_source(session, source, logger)
