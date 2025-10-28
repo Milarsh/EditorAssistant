@@ -45,6 +45,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      app:
+        condition: service_started
     volumes:
       - ./src:/app/src:ro
       - ./log:/app/log

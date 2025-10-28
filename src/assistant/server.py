@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from collections import deque, defaultdict
 
+from src.assistant.rss_parser import is_rss_source
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
@@ -210,7 +211,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             with SessionLocal() as session:
                 rows = session.execute(select(Source).order_by(Source.id)).scalars().all()
                 self._json_ok([{
-                    "id": r.id, "name": r.name, "rss_url": r.rss_url,
+                    "id": r.id, "name": r.name, "type": r.type, "rss_url": r.rss_url,
                     "enabled": r.enabled, "created_at": r.created_at
                 } for r in rows])
 
@@ -228,16 +229,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             if errors:
                 raise ValidationError("Invalid fields", details=errors)
 
+            if "vk.com" in rss_url:
+                source_type = "vk"
+            elif "t.me" in rss_url or "telegram.me" in rss_url:
+                source_type = "tg"
+            else:
+                source_type = "rss"
+
             with SessionLocal() as session:
                 try:
-                    obj = Source(name=name, rss_url=rss_url, enabled=enabled)
+                    obj = Source(name=name, type=source_type, rss_url=rss_url, enabled=enabled)
                     session.add(obj)
                     session.commit()
                     session.refresh(obj)
                 except IntegrityError as error:
                     session.rollback()
                     raise Conflict("rss_url already exists")
-                self._json_ok({"id": obj.id, "name": obj.name, "rss_url": obj.rss_url,
+                self._json_ok({"id": obj.id, "name": obj.name, "type": obj.type, "rss_url": obj.rss_url,
                                "enabled": obj.enabled, "created_at": obj.created_at}, status=201)
 
         def delete_source(self, match, query):

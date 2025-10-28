@@ -11,6 +11,8 @@ SessionLocal = sessionmaker(bind=engine)
 REQUIRED_TABLES = {"sources", "articles"}
 
 def create_schema():
+    import src.db.models.source # noqa: F401
+    import src.db.models.article # noqa: F401
     Base.metadata.create_all(engine)
 
 def schema_exists() -> bool:
