@@ -266,16 +266,63 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             limit = max(1, min(100, int(query.get("limit", [20])[0])))
             offset = max(0, int(query.get("offset", [0])[0]))
 
+            date_from_raw = (query.get("date_from", [""])[0] or "").strip()
+            date_to_raw = (query.get("date_to", [""])[0] or "").strip()
+            order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
+
+            def _parse_dt(val: str, end_of_day: bool = False):
+                if not val:
+                    return None
+                if len(val) == 10 and val[4] == "-" and val[7] == "-":
+                    y, m, d = map(int, val.split("-"))
+                    base = datetime(y, m, d, tzinfo=timezone.utc)
+                    if end_of_day:
+                        return base + timedelta(days=1) - timedelta(microseconds=1)
+                    return base
+                val = val.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(val)
+                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+            try:
+                dt_from = _parse_dt(date_from_raw, end_of_day=False)
+                dt_to = _parse_dt(date_to_raw, end_of_day=True)
+            except Exception:
+                raise ValidationError("Invalid date format", details={
+                    "date_from": "Use RFC3339 or YYYY-MM-DD" if date_from_raw else None,
+                    "date_to": "Use RFC3339 or YYYY-MM-DD" if date_to_raw else None,
+                })
+
+            if dt_from and dt_to and dt_from > dt_to:
+                raise ValidationError("Invalid date range", details={"date_from": "must be <= date_to"})
+
             with SessionLocal() as session:
                 stmt = select(Article)
+
                 if source_id:
                     stmt = stmt.where(Article.source_id == source_id)
+
                 if text_q:
                     ilike = f"%{text_q}%"
                     stmt = stmt.where((Article.title.ilike(ilike)) | (Article.description.ilike(ilike)))
 
+                if dt_from:
+                    stmt = stmt.where(Article.published_at >= dt_from)
+                if dt_to:
+                    stmt = stmt.where(Article.published_at <= dt_to)
+
                 total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-                stmt = stmt.order_by(Article.published_at.desc().nulls_last(), Article.id.desc())
+
+                if order == "asc":
+                    stmt = stmt.order_by(
+                        Article.published_at.asc().nulls_last(),
+                        Article.id.asc(),
+                    )
+                else:
+                    stmt = stmt.order_by(
+                        Article.published_at.desc().nulls_last(),
+                        Article.id.desc(),
+                    )
+
                 rows = session.execute(stmt.limit(limit).offset(offset)).scalars().all()
 
                 self._json_ok({

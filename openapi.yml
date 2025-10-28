@@ -112,13 +112,16 @@ paths:
   /api/articles:
     get:
       tags:
-      - Articles
-      summary: Список новостей
+        - Articles
+      summary: Список статей
       parameters:
-      - $ref: '#/components/parameters/SourceId'
-      - $ref: '#/components/parameters/Q'
-      - $ref: '#/components/parameters/Limit'
-      - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/SourceId'   # если у вас уже есть такой параметр
+        - $ref: '#/components/parameters/Q'          # если у вас уже есть поиск q
+        - $ref: '#/components/parameters/DateFrom'   # ← новее
+        - $ref: '#/components/parameters/DateTo'     # ← новее
+        - $ref: '#/components/parameters/Order'      # ← новее
       responses:
         '200':
           description: Успешно
@@ -127,25 +130,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/ArticlesList'
               examples:
-                ok:
+                example:
                   value:
-                    total: 1
-                    limit: 5
+                    total: 2
+                    limit: 20
                     offset: 0
                     items:
-                    - id: 1
-                      source_id: 2
-                      title: Test news
-                      link: https://example.com/news/1
-                      description: Full text
-                      guid: guid-1
-                      published_at: '2025-10-10T10:05:51Z'
-                      fetched_at: '2025-10-10T09:20:17Z'
-                      parent_article_id: null
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
+                      - id: 101
+                        source_id: 2
+                        title: "Новость"
+                        link: "https://example.com/1"
+                        description: "Текст"
+                        guid: "guid-1"
+                        published_at: "2025-10-28T10:05:50Z"
+                        fetched_at: "2025-10-28T10:06:00Z"
+                        parent_article_id: null
+                      - id: 102
+                        source_id: 2
+                        title: "https://t.me/channel/42"
+                        link: "https://t.me/channel/42"
+                        description: null
+                        guid: "tg:123456:42:1"
+                        published_at: "2025-10-28T10:05:51Z"
+                        fetched_at: "2025-10-28T10:06:10Z"
+                        parent_article_id: 101
   /api/articles/{id}:
     get:
       tags:
@@ -426,6 +434,48 @@ components:
         type: integer
         minimum: 0
         default: 0
+    DateFrom:
+      name: date_from
+      in: query
+      required: false
+      description: >
+        Фильтр по дате публикации (поле `published_at`) с этой даты/времени включительно.
+        Поддерживаются форматы RFC 3339: `YYYY-MM-DDTHH:MM:SSZ|±HH:MM` и дата без времени `YYYY-MM-DD`.
+        Если передана только дата, интерпретируется как начало суток 00:00:00 в UTC.
+      schema:
+        type: string
+      examples:
+        date:
+          value: "2025-10-28"
+        datetime_z:
+          value: "2025-10-28T08:00:00Z"
+        datetime_offset:
+          value: "2025-10-28T11:00:00+03:00"
+    DateTo:
+      name: date_to
+      in: query
+      required: false
+      description: >
+        Верхняя граница фильтра по `published_at` включительно.
+        При дате без времени `YYYY-MM-DD` берётся конец суток 23:59:59.999999 (UTC).
+      schema:
+        type: string
+      examples:
+        date:
+          value: "2025-10-28"
+        datetime_z:
+          value: "2025-10-28T14:00:00Z"
+    Order:
+      name: order
+      in: query
+      required: false
+      description: >
+        Направление сортировки по `published_at`, затем по `id`.
+        По умолчанию убывание (`desc`).
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
   schemas:
     Error:
       type: object
