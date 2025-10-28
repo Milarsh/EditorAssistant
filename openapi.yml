@@ -3,20 +3,20 @@ info:
   title: Editor Assistant API
   version: 1.0.0
   description: Позволяет получать новости и их источники в формате JSON, проверять состояние сервиса.
-
 servers:
-  - url: http://localhost:8000
-    description: Локальный сервер
-
+- url: http://localhost:8000
+  description: Локальный сервер
 tags:
-  - name: Health
-  - name: Sources
-  - name: Articles
-
+- name: Health
+- name: Sources
+- name: Articles
+- name: Media
+- name: TelegramAuth
 paths:
   /healthz:
     get:
-      tags: [Health]
+      tags:
+      - Health
       summary: Проверка состояния сервиса
       responses:
         '200':
@@ -26,10 +26,10 @@ paths:
               schema:
                 type: string
                 example: OK
-
   /api/sources:
     get:
-      tags: [Sources]
+      tags:
+      - Sources
       summary: Список источников
       responses:
         '200':
@@ -41,18 +41,19 @@ paths:
               examples:
                 ok:
                   value:
-                    - id: 1
-                      name: Example
-                      rss_url: https://example.com/rss.xml
-                      enabled: true
-                      created_at: "2025-10-10 09:20:17.403888"
+                  - id: 1
+                    name: Example
+                    type: rss
+                    rss_url: https://example.com/rss.xml
+                    enabled: true
+                    created_at: '2025-10-10T09:20:17Z'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
     post:
-      tags: [Sources]
+      tags:
+      - Sources
       summary: Добавить источник
       requestBody:
         required: true
@@ -81,13 +82,13 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /api/sources/{id}:
     delete:
-      tags: [Sources]
+      tags:
+      - Sources
       summary: Удалить источник
       parameters:
-        - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Id'
       responses:
         '200':
           description: Удалено
@@ -96,24 +97,31 @@ paths:
               schema:
                 type: object
                 properties:
-                  status: { type: string, example: deleted }
-                  id: { type: integer, example: 1 }
+                  status:
+                    type: string
+                    example: deleted
+                  id:
+                    type: integer
+                    example: 1
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /api/articles:
     get:
-      tags: [Articles]
-      summary: Список новостей
+      tags:
+        - Articles
+      summary: Список статей
       parameters:
-        - $ref: '#/components/parameters/SourceId'
-        - $ref: '#/components/parameters/Q'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/SourceId'   # если у вас уже есть такой параметр
+        - $ref: '#/components/parameters/Q'          # если у вас уже есть поиск q
+        - $ref: '#/components/parameters/DateFrom'   # ← новее
+        - $ref: '#/components/parameters/DateTo'     # ← новее
+        - $ref: '#/components/parameters/Order'      # ← новее
       responses:
         '200':
           description: Успешно
@@ -122,31 +130,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/ArticlesList'
               examples:
-                ok:
+                example:
                   value:
-                    total: 1
-                    limit: 5
+                    total: 2
+                    limit: 20
                     offset: 0
                     items:
-                      - id: 1
+                      - id: 101
                         source_id: 2
-                        title: Test news
-                        link: https://example.com/news/1
-                        description: Full text
-                        guid: guid-1
-                        published_at: "2025-10-10 10:05:51.064905"
-                        fetched_at: "2025-10-10 09:20:17.403888"
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
+                        title: "Новость"
+                        link: "https://example.com/1"
+                        description: "Текст"
+                        guid: "guid-1"
+                        published_at: "2025-10-28T10:05:50Z"
+                        fetched_at: "2025-10-28T10:06:00Z"
+                        parent_article_id: null
+                      - id: 102
+                        source_id: 2
+                        title: "https://t.me/channel/42"
+                        link: "https://t.me/channel/42"
+                        description: null
+                        guid: "tg:123456:42:1"
+                        published_at: "2025-10-28T10:05:51Z"
+                        fetched_at: "2025-10-28T10:06:10Z"
+                        parent_article_id: 101
   /api/articles/{id}:
     get:
-      tags: [Articles]
+      tags:
+      - Articles
       summary: Получить новость по id
       parameters:
-        - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/Id'
       responses:
         '200':
           description: Найдено
@@ -160,6 +174,223 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/articles/{id}/media:
+    get:
+      tags:
+      - Articles
+      summary: Медиа-данные статьи (локальные файлы и данные о видео)
+      description: |
+        Возвращает список медиа (assets) для статьи.  
+        Локальные файлы (картинки/документы) отдаются через `/media/...`.  
+        Видео — внешние ссылки/встраиваемый плеер VK.
+        Видео из Telegram скачиваются.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Список медиа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleAssetsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/articles/{id}/children:
+    get:
+      tags:
+        - Articles
+      summary: Дочерние статьи (фото, видео)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleChildrenResponse'
+              examples:
+                ok:
+                  value:
+                    id: 123
+                    total: 2
+                    limit: 20
+                    offset: 0
+                    items:
+                      - id: 124
+                        source_id: 2
+                        title: https://t.me/channel/42
+                        link: https://t.me/channel/42
+                        description: null
+                        guid: tg:123456:42:1
+                        published_at: '2025-10-10T10:05:51Z'
+                        fetched_at: '2025-10-10T10:06:10Z'
+                        parent_article_id: 123
+                      - id: 125
+                        source_id: 2
+                        title: https://t.me/channel/42
+                        link: https://t.me/channel/42
+                        description: null
+                        guid: tg:123456:42:2
+                        published_at: '2025-10-10T10:05:52Z'
+                        fetched_at: '2025-10-10T10:06:11Z'
+                        parent_article_id: 123
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/articles/{id}/parent:
+    get:
+      tags:
+        - Articles
+      summary: Родительская статья
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleParentResponse'
+              examples:
+                with_parent:
+                  value:
+                    id: 124
+                    parent:
+                      id: 123
+                      source_id: 2
+                      title: "Основной пост с текстом"
+                      link: https://t.me/channel/42
+                      description: "Текст поста"
+                      guid: tg:123456:42
+                      published_at: '2025-10-10T10:05:50Z'
+                      fetched_at: '2025-10-10T10:06:00Z'
+                      parent_article_id: null
+                no_parent:
+                  value:
+                    id: 123
+                    parent: null
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /media/{path}:
+    get:
+      tags:
+      - Media
+      summary: Выдача локальных медиафайлов
+      parameters:
+        - in: path
+          name: path
+          required: true
+          schema: { type: string }
+          description: Относительный путь внутри каталога media (например, `vk/-40316705/54155576/photo_1.jpg`)
+      responses:
+        '200':
+          description: Файл
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '400':
+            $ref: '#/components/responses/BadRequest'
+        '404':
+            $ref: '#/components/responses/NotFound'
+
+  /api/tg/auth/status:
+    get:
+      tags: [ TelegramAuth ]
+      summary: Получить текущий статус авторизации в Telegram
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/tg/auth/qr:
+    post:
+      tags: [ TelegramAuth ]
+      summary: Начать/перегенерировать QR-логин
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force:
+                  type: boolean
+                  description: "Создать новый QR, даже если старый ещё не истёк"
+                  default: false
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/tg/auth/2fa:
+    post:
+      tags: [ TelegramAuth ]
+      summary: Завершить авторизацию — отправить 2FA-пароль
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ password ]
+              properties:
+                password:
+                  type: string
+                  example: "mysupersecret"
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '400':
+          description: Неверный пароль или некорректное тело запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/tg/auth/logout:
+    post:
+      tags: [ TelegramAuth ]
+      summary: Выйти из Telegram-аккаунта и сбросить сессию
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TgAuthStatus'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
 
 components:
   parameters:
@@ -167,52 +398,110 @@ components:
       name: id
       in: path
       required: true
-      schema: { type: integer, minimum: 1 }
+      schema:
+        type: integer
+        minimum: 1
     SourceId:
       name: source_id
       in: query
       required: false
-      schema: { type: integer, minimum: 1 }
+      schema:
+        type: integer
+        minimum: 1
       description: Фильтр по источнику
     Q:
       name: q
       in: query
       required: false
-      schema: { type: string, maxLength: 200 }
+      schema:
+        type: string
+        maxLength: 200
       description: Поиск по заголовку/описанию (ILIKE)
     Limit:
       name: limit
       in: query
       required: false
-      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
     Offset:
       name: offset
       in: query
       required: false
-      schema: { type: integer, minimum: 0, default: 0 }
-
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    DateFrom:
+      name: date_from
+      in: query
+      required: false
+      description: >
+        Фильтр по дате публикации (поле `published_at`) с этой даты/времени включительно.
+        Поддерживаются форматы RFC 3339: `YYYY-MM-DDTHH:MM:SSZ|±HH:MM` и дата без времени `YYYY-MM-DD`.
+        Если передана только дата, интерпретируется как начало суток 00:00:00 в UTC.
+      schema:
+        type: string
+      examples:
+        date:
+          value: "2025-10-28"
+        datetime_z:
+          value: "2025-10-28T08:00:00Z"
+        datetime_offset:
+          value: "2025-10-28T11:00:00+03:00"
+    DateTo:
+      name: date_to
+      in: query
+      required: false
+      description: >
+        Верхняя граница фильтра по `published_at` включительно.
+        При дате без времени `YYYY-MM-DD` берётся конец суток 23:59:59.999999 (UTC).
+      schema:
+        type: string
+      examples:
+        date:
+          value: "2025-10-28"
+        datetime_z:
+          value: "2025-10-28T14:00:00Z"
+    Order:
+      name: order
+      in: query
+      required: false
+      description: >
+        Направление сортировки по `published_at`, затем по `id`.
+        По умолчанию убывание (`desc`).
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
   schemas:
     Error:
       type: object
-      required: [error]
+      required:
+      - error
       properties:
         error:
           type: object
-          required: [code, message, request_id]
+          required:
+          - code
+          - message
+          - request_id
           properties:
             code:
               type: string
               description: Машинно-читабельный код ошибки
               enum:
-                - bad_request
-                - not_found
-                - conflict
-                - too_many_requests
-                - method_not_allowed
-                - not_implemented
-                - internal_error
-                - source_error
-                - parser_error
+              - bad_request
+              - not_found
+              - conflict
+              - too_many_requests
+              - method_not_allowed
+              - not_implemented
+              - internal_error
+              - source_error
+              - parser_error
               example: bad_request
             message:
               type: string
@@ -223,12 +512,15 @@ components:
             details:
               type: object
               additionalProperties: true
-
     SourceCreate:
       type: object
-      required: [name, rss_url]
+      required:
+      - name
+      - rss_url
       properties:
-        name: { type: string, minLength: 1 }
+        name:
+          type: string
+          minLength: 1
         rss_url:
           type: string
           format: uri
@@ -236,34 +528,59 @@ components:
         enabled:
           type: boolean
           default: true
-
     Source:
       type: object
-      required: [id, name, rss_url, enabled, created_at]
+      required:
+      - id
+      - name
+      - type
+      - rss_url
+      - enabled
+      - created_at
       properties:
-        id: { type: integer }
-        name: { type: string }
-        rss_url: { type: string, format: uri }
-        enabled: { type: boolean }
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        rss_url:
+          type: string
+          format: uri
+        enabled:
+          type: boolean
         created_at:
           type: string
           description: UTC строка в формате "YYYY-MM-DD HH:MM:SS[.ffffff]"
-
     SourcesList:
       type: array
       items:
         $ref: '#/components/schemas/Source'
-
     Article:
       type: object
-      required: [id, source_id, title, link, guid, fetched_at]
+      required:
+      - id
+      - source_id
+      - title
+      - link
+      - guid
+      - fetched_at
+      - parent_article_id
       properties:
-        id: { type: integer }
-        source_id: { type: integer }
-        title: { type: string }
-        link: { type: string, format: uri }
-        description: { type: string, nullable: true }
-        guid: { type: string }
+        id:
+          type: integer
+        source_id:
+          type: integer
+        title:
+          type: string
+        link:
+          type: string
+          format: uri
+        description:
+          type: string
+          nullable: true
+        guid:
+          type: string
         published_at:
           type: string
           nullable: true
@@ -271,90 +588,247 @@ components:
         fetched_at:
           type: string
           description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
-
+        parent_article_id:
+          type: integer
+          description: ID родительской статьи (TG)
     ArticlesList:
       type: object
-      required: [total, limit, offset, items]
+      required:
+      - total
+      - limit
+      - offset
+      - items
       properties:
-        total: { type: integer }
-        limit: { type: integer }
-        offset: { type: integer }
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
         items:
           type: array
           items:
             $ref: '#/components/schemas/Article'
+    ArticleAssetsResponse:
+      type: object
+      required: [id, assets]
+      properties:
+        id: { type: integer, example: 327 }
+        assets:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/AssetImage'
+              - $ref: '#/components/schemas/AssetFile'
+              - $ref: '#/components/schemas/AssetVideo'
+    ArticleChildrenResponse:
+      type: object
+      required: [id, total, limit, offset, items]
+      properties:
+        id:
+          type: integer
+          description: ID родительской статьи
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Article'
+    ArticleParentResponse:
+      type: object
+      required: [id, parent]
+      properties:
+        id:
+          type: integer
+          description: ID запрошенной статьи
+        parent:
+          allOf:
+            - $ref: '#/components/schemas/Article'
+          nullable: true
+          description: Родительская статья (null, если нет)
+
+    AssetImage:
+      type: object
+      required: [type, file_url, mime, name]
+      properties:
+        type:
+          type: string
+          enum: [image]
+        file_url:
+          type: string
+          description: Локальный URL до файла
+          example: /media/vk/-40316705/54155576/photo_1.jpg
+        mime:
+          type: string
+          example: image/jpeg
+        name:
+          type: string
+          example: photo_1.jpg
+    AssetFile:
+      type: object
+      required: [type, file_url, mime, name]
+      properties:
+        type:
+          type: string
+          enum: [file]
+        file_url:
+          type: string
+          example: /media/vk/-40316705/54155576/doc_1.pdf
+        mime:
+          type: string
+          example: application/pdf
+        name:
+          type: string
+          example: doc_1.pdf
+    AssetVideo:
+      type: object
+      required: [type, embed_url]
+      properties:
+        type:
+          type: string
+          enum: [video]
+        embed_url:
+          type: string
+          description: Встраиваемый плеер VK
+          example: https://vk.com/video_ext.php?oid=-40316705&id=54155576&hd=2
+        page_url:
+          type: string
+          description: Страница видео VK
+          example: https://vk.com/video-40316705_54155576
+        poster:
+          type: string
+          nullable: true
+          description: URL постера (обычно локальный `/media/...`), если сохранён
+          example: /media/vk/-40316705/54155576/video_poster.jpg
+    TgAuthUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123456789
+        first_name:
+          type: string
+          nullable: true
+          example: Ivan
+        last_name:
+          type: string
+          nullable: true
+          example: Petrov
+        username:
+          type: string
+          nullable: true
+          example: ivanpetrov
+        phone:
+          type: string
+          nullable: true
+          example: "+79990000000"
+    TgAuthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ unauthorized, pending, password_required, authorized, expired, error ]
+          example: pending
+        qr_url:
+          type: string
+          nullable: true
+          description: "Ссылка tg://login?token=..., из которой фронт строит QR"
+          example: "tg://login?token=AAEAAABb..."
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "RFC3339 время истечения QR-токена (UTC)"
+          example: "2025-10-27T12:00:00Z"
+        error:
+          type: string
+          nullable: true
+          example: bad_password
+        user:
+          $ref: '#/components/schemas/TgAuthUser'
 
   responses:
     BadRequest:
       description: Неверные данные
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: bad_request
-                  message: "Invalid fields"
-                  request_id: "1730000000-1"
-                  details: { field: "Required" }
+                  message: Invalid fields
+                  request_id: 1730000000-1
+                  details:
+                    field: Required
     NotFound:
       description: Не найдено
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: not_found
-                  message: "Resource not found"
-                  request_id: "1730000000-2"
+                  message: Resource not found
+                  request_id: 1730000000-2
     Conflict:
       description: Конфликт (например, дубликат rss_url)
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: conflict
-                  message: "rss_url already exists"
-                  request_id: "1730000000-3"
+                  message: rss_url already exists
+                  request_id: 1730000000-3
     TooManyRequests:
       description: Превышен лимит запросов
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: too_many_requests
-                  message: "Too many requests: limit 60 per 60s"
-                  request_id: "1730000000-4"
+                  message: 'Too many requests: limit 60 per 60s'
+                  request_id: 1730000000-4
     MethodNotAllowed:
       description: Метод не поддерживается
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: method_not_allowed
-                  message: "Method not allowed"
-                  request_id: "1730000000-5"
+                  message: Method not allowed
+                  request_id: 1730000000-5
     InternalError:
       description: Внутренняя ошибка
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            $ref: '#/components/schemas/Error'
           examples:
             sample:
               value:
                 error:
                   code: internal_error
-                  message: "Internal server error"
-                  request_id: "1730000000-6"
+                  message: Internal server error
+                  request_id: 1730000000-6

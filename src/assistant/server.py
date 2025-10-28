@@ -15,9 +15,30 @@ from sqlalchemy.exc import IntegrityError
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from pathlib import Path
+import mimetypes
+from urllib.parse import unquote
+
+from src.assistant.tg_auth import start_qr_sync, status_sync, submit_password_sync, logout_sync
+
+MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
+
+def _safe_join(base: str, *parts: str) -> Path:
+    base_path = Path(base).resolve()
+    full = base_path.joinpath(*parts).resolve()
+    if not str(full).startswith(str(base_path)):
+        raise ValueError("Unsafe path")
+    return full
+
 # -------- утилиты JSON --------
 def json_bytes(data) -> bytes:
-    return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+    def _default(value):
+        if isinstance(value, datetime):
+            dt = value if value.tzinfo is not None else value.replace(tzinfo = timezone.utc)
+            s = dt.isoformat(timespec="seconds")
+            return s[:-6] + "Z" if s.endswith("+00:00") else s
+        return str(value)
+    return json.dumps(data, ensure_ascii=False, default=_default).encode("utf-8")
 
 def parse_json_body(handler: BaseHTTPRequestHandler):
     length = int(handler.headers.get("Content-Length", 0) or 0)
@@ -115,11 +136,16 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             # articles
             ("GET",  re.compile(r"^/api/articles$"),          "list_articles"),
             ("GET",  re.compile(r"^/api/articles/(\d+)$"),    "get_article"),
-            # стоп-слова и категории
-            ("GET", re.compile(r"^/api/stopwords$"), "stopwords_placeholder"),
-            ("POST", re.compile(r"^/api/stopwords$"), "stopwords_placeholder"),
-            ("GET", re.compile(r"^/api/categories$"), "stopwords_placeholder"),
-            ("POST", re.compile(r"^/api/categories$"), "stopwords_placeholder"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/parent$"), "get_article_parent"),
+            # media (local)
+            ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
+            # telegram auth
+            ("GET", re.compile(r"^/api/tg/auth/status$"), "tg_auth_status"),
+            ("POST", re.compile(r"^/api/tg/auth/qr$"), "tg_auth_start_qr"),
+            ("POST", re.compile(r"^/api/tg/auth/2fa$"), "tg_auth_2fa"),
+            ("POST", re.compile(r"^/api/tg/auth/logout$"), "tg_auth_logout"),
         ]
 
         def do_GET(self): self._dispatch("GET")
@@ -186,7 +212,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             with SessionLocal() as session:
                 rows = session.execute(select(Source).order_by(Source.id)).scalars().all()
                 self._json_ok([{
-                    "id": r.id, "name": r.name, "rss_url": r.rss_url,
+                    "id": r.id, "name": r.name, "type": r.type, "rss_url": r.rss_url,
                     "enabled": r.enabled, "created_at": r.created_at
                 } for r in rows])
 
@@ -204,16 +230,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             if errors:
                 raise ValidationError("Invalid fields", details=errors)
 
+            if "vk.com" in rss_url:
+                source_type = "vk"
+            elif "t.me" in rss_url or "telegram.me" in rss_url:
+                source_type = "tg"
+            else:
+                source_type = "rss"
+
             with SessionLocal() as session:
                 try:
-                    obj = Source(name=name, rss_url=rss_url, enabled=enabled)
+                    obj = Source(name=name, type=source_type, rss_url=rss_url, enabled=enabled)
                     session.add(obj)
                     session.commit()
                     session.refresh(obj)
                 except IntegrityError as error:
                     session.rollback()
                     raise Conflict("rss_url already exists")
-                self._json_ok({"id": obj.id, "name": obj.name, "rss_url": obj.rss_url,
+                self._json_ok({"id": obj.id, "name": obj.name, "type": obj.type, "rss_url": obj.rss_url,
                                "enabled": obj.enabled, "created_at": obj.created_at}, status=201)
 
         def delete_source(self, match, query):
@@ -233,16 +266,63 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             limit = max(1, min(100, int(query.get("limit", [20])[0])))
             offset = max(0, int(query.get("offset", [0])[0]))
 
+            date_from_raw = (query.get("date_from", [""])[0] or "").strip()
+            date_to_raw = (query.get("date_to", [""])[0] or "").strip()
+            order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
+
+            def _parse_dt(val: str, end_of_day: bool = False):
+                if not val:
+                    return None
+                if len(val) == 10 and val[4] == "-" and val[7] == "-":
+                    y, m, d = map(int, val.split("-"))
+                    base = datetime(y, m, d, tzinfo=timezone.utc)
+                    if end_of_day:
+                        return base + timedelta(days=1) - timedelta(microseconds=1)
+                    return base
+                val = val.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(val)
+                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+            try:
+                dt_from = _parse_dt(date_from_raw, end_of_day=False)
+                dt_to = _parse_dt(date_to_raw, end_of_day=True)
+            except Exception:
+                raise ValidationError("Invalid date format", details={
+                    "date_from": "Use RFC3339 or YYYY-MM-DD" if date_from_raw else None,
+                    "date_to": "Use RFC3339 or YYYY-MM-DD" if date_to_raw else None,
+                })
+
+            if dt_from and dt_to and dt_from > dt_to:
+                raise ValidationError("Invalid date range", details={"date_from": "must be <= date_to"})
+
             with SessionLocal() as session:
                 stmt = select(Article)
+
                 if source_id:
                     stmt = stmt.where(Article.source_id == source_id)
+
                 if text_q:
                     ilike = f"%{text_q}%"
                     stmt = stmt.where((Article.title.ilike(ilike)) | (Article.description.ilike(ilike)))
 
+                if dt_from:
+                    stmt = stmt.where(Article.published_at >= dt_from)
+                if dt_to:
+                    stmt = stmt.where(Article.published_at <= dt_to)
+
                 total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-                stmt = stmt.order_by(Article.published_at.desc().nulls_last(), Article.id.desc())
+
+                if order == "asc":
+                    stmt = stmt.order_by(
+                        Article.published_at.asc().nulls_last(),
+                        Article.id.asc(),
+                    )
+                else:
+                    stmt = stmt.order_by(
+                        Article.published_at.desc().nulls_last(),
+                        Article.id.desc(),
+                    )
+
                 rows = session.execute(stmt.limit(limit).offset(offset)).scalars().all()
 
                 self._json_ok({
@@ -256,6 +336,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "guid": a.guid,
                         "published_at": a.published_at,
                         "fetched_at": a.fetched_at,
+                        "parent_article_id": a.parent_article_id
                     } for a in rows]
                 })
 
@@ -274,7 +355,249 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "guid": article.guid,
                     "published_at": article.published_at,
                     "fetched_at": article.fetched_at,
+                    "parent_article_id": article.parent_article_id
                 })
+
+        def get_article_media(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
+                    raise NotFound("Article not found")
+
+                assets = []
+
+                try:
+                    if article.guid and article.guid.startswith("vk:"):
+                        _, owner_str, post_str = article.guid.split(":", 2)
+
+                        found_dir = None
+                        dir = _safe_join(MEDIA_DIR, "vk", owner_str, post_str)
+                        if dir.exists() and dir.is_dir():
+                            found_dir = dir
+
+                        if found_dir:
+                            for path in sorted(found_dir.iterdir()):
+                                if not path.is_file():
+                                    continue
+                                if path.name == "media.json":
+                                    continue
+                                rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
+                                file_url = f"/media/{rel}"
+                                mime, _ = mimetypes.guess_type(path.name)
+                                type = "image" if (mime or "").startswith("image/") else "file"
+                                assets.append({
+                                    "type": type,
+                                    "file_url": file_url,
+                                    "mime": mime or "application/octet-stream",
+                                    "name": path.name,
+                                })
+
+                            manifest_path = found_dir / "media.json"
+                            if manifest_path.exists():
+                                try:
+                                    meta = json.loads(manifest_path.read_text(encoding="utf-8"))
+                                    for it in meta:
+                                        if it.get("type") == "video":
+                                            assets.append({
+                                                "type": "video",
+                                                "page_url": it.get("page_url"),
+                                                "embed_url": it.get("embed_url"),
+                                            })
+                                except Exception as exception:
+                                    print(f"[WARN] bad media.json for article {article_id}: {exception}")
+                    elif article.guid and article.guid.startswith("tg:"):
+                        _, channel, msg_id = article.guid.split(":", 2)
+                        found_dir = None
+                        dir = _safe_join(MEDIA_DIR, "tg", channel, msg_id)
+                        if dir.exists() and dir.is_dir():
+                            found_dir = dir
+
+                        if found_dir:
+                            for path in sorted(found_dir.iterdir()):
+                                if path.is_file() and path.name != "media.json":
+                                    rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
+                                    mime, _ = mimetypes.guess_type(path.name)
+                                    type = "image" if (mime or "").startswith("image/") else (
+                                        "video" if (mime or "").startswith("video/") else "file"
+                                    )
+                                    assets.append({
+                                        "type": type,
+                                        "file_url": f"/media/{rel}",
+                                        "mime": mime or "application/octet-stream",
+                                        "name": path.name,
+                                    })
+
+                except Exception as exception:
+                    print(f"[ERROR] assets for article {article_id}: {exception}")
+
+                self._json_ok({"id": article_id, "assets": assets})
+
+        def get_article_children(self, match, query):
+            article_id = int(match.group(1))
+            limit = max(1, min(100, int(query.get("limit", [50])[0])))
+            offset = max(0, int(query.get("offset", [0])[0]))
+
+            with SessionLocal() as session:
+                parent = session.get(Article, article_id)
+                if not parent:
+                    raise NotFound("Article not found")
+
+                base_stmt = select(Article).where(Article.parent_article_id == article_id)
+                total = session.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
+
+                rows = session.execute(
+                    base_stmt
+                    .order_by(Article.published_at.desc().nulls_last(), Article.id.desc())
+                    .limit(limit)
+                    .offset(offset)
+                ).scalars().all()
+
+                self._json_ok({
+                    "id": article_id,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "items": [{
+                        "id": a.id,
+                        "source_id": a.source_id,
+                        "title": a.title,
+                        "link": a.link,
+                        "description": a.description,
+                        "guid": a.guid,
+                        "published_at": a.published_at,
+                        "fetched_at": a.fetched_at,
+                        "parent_article_id": a.parent_article_id,
+                    } for a in rows]
+                })
+
+        def get_article_parent(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
+                    raise NotFound("Article not found")
+
+                if not article.parent_article_id:
+                    return self._json_ok({"id": article_id, "parent": None})
+
+                parent = session.get(Article, article.parent_article_id)
+                if not parent:
+                    return self._json_ok({"id": article_id, "parent": None})
+
+                self._json_ok({
+                    "id": article_id,
+                    "parent": {
+                        "id": parent.id,
+                        "source_id": parent.source_id,
+                        "title": parent.title,
+                        "link": parent.link,
+                        "description": parent.description,
+                        "guid": parent.guid,
+                        "published_at": parent.published_at,
+                        "fetched_at": parent.fetched_at,
+                        "parent_article_id": parent.parent_article_id,
+                    }
+                })
+
+        # Media (Local)
+        def serve_media(self, match, query):
+            rel_path = match.group(1)
+            try:
+                rel_path = unquote(rel_path)
+                rel_path = rel_path.lstrip("/").replace("\\", "/")
+                fs_path = _safe_join(MEDIA_DIR, rel_path)
+                if not fs_path.exists() or not fs_path.is_file():
+                    return self._json_error(404, "not_found", "Media file not found")
+                file_size = fs_path.stat().st_size
+                mime, _ = mimetypes.guess_type(str(fs_path))
+                mime = mime or "application/octet-stream"
+
+                range = self.headers.get("Range")
+                start, end = 0, file_size - 1
+                status = 200
+                extra_headers = []
+
+                if range and range.startswith("bytes="):
+                    try:
+                        part = range.split("=", 1)[1]
+                        s, _, e = part.partition("-")
+                        if s.strip():
+                            start = max(0, int(s))
+                        if e.strip():
+                            end = min(file_size - 1, int(e))
+                        if start > end:
+                            start, end = 0, file_size - 1
+                        status = 206
+                        extra_headers.extend([
+                            ("Content-Range", f"bytes {start}-{end}/{file_size}"),
+                            ("Accept-Ranges", "bytes"),
+                        ])
+                    except Exception:
+                        start, end = 0, file_size - 1
+                        status = 200
+
+                length = end - start + 1
+
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Type", mime)
+                    self.send_header("Content-Length", str(length))
+                    if status == 206:
+                        pass
+                    self.send_header("Accept-Ranges", "bytes")
+                    for k, v in extra_headers:
+                        self.send_header(k, v)
+                    self.end_headers()
+                    with open(fs_path, "rb") as file:
+                        file.seek(start)
+                        remaining = length
+                        while remaining > 0:
+                            chunk = file.read(min(512 * 1024, remaining))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                except Exception as exception:
+                    print(f"[ERROR] stream media {rel_path}: {exception}")
+                    return
+
+            except ValueError:
+                return self._json_error(400, "bad_request", "Invalid media path")
+            except Exception as exception:
+                print(f"[ERROR] GET /media/{rel_path}: {exception}")
+                try:
+                    return self._json_error(500, "internal_error", "Internal server error")
+                except Exception:
+                    return
+
+        # Telegram Auth
+        def tg_auth_status(self, match, query):
+            data = status_sync()
+            self._json_ok(data)
+
+        def tg_auth_start_qr(self, match, query):
+            body = parse_json_body(self) or {}
+            force = bool(body.get("force", False))
+            data = start_qr_sync(force=force)
+            self._json_ok(data)
+
+        def tg_auth_2fa(self, match, query):
+            body = parse_json_body(self) or {}
+            password = (body.get("password") or "").strip()
+            if not password:
+                raise ValidationError("Invalid fields", details={"password": "Required"})
+            data = submit_password_sync(password)
+            if data.get("status") == "password_required" and data.get("error") == "bad_password":
+                return self._json_error(400, "bad_request", "Bad password", {"password": "bad_password"})
+            self._json_ok(data)
+
+        def tg_auth_logout(self, match, query):
+            data = logout_sync()
+            self._json_ok(data)
 
         # ---- заглушка ----
         def not_impl(self, match, query):
