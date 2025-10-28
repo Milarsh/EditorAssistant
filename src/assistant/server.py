@@ -137,6 +137,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("GET",  re.compile(r"^/api/articles$"),          "list_articles"),
             ("GET",  re.compile(r"^/api/articles/(\d+)$"),    "get_article"),
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/parent$"), "get_article_parent"),
             # media (local)
             ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
             # telegram auth
@@ -287,6 +289,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "guid": a.guid,
                         "published_at": a.published_at,
                         "fetched_at": a.fetched_at,
+                        "parent_article_id": a.parent_article_id
                     } for a in rows]
                 })
 
@@ -305,6 +308,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "guid": article.guid,
                     "published_at": article.published_at,
                     "fetched_at": article.fetched_at,
+                    "parent_article_id": article.parent_article_id
                 })
 
         def get_article_media(self, match, query):
@@ -381,6 +385,73 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     print(f"[ERROR] assets for article {article_id}: {exception}")
 
                 self._json_ok({"id": article_id, "assets": assets})
+
+        def get_article_children(self, match, query):
+            article_id = int(match.group(1))
+            limit = max(1, min(100, int(query.get("limit", [50])[0])))
+            offset = max(0, int(query.get("offset", [0])[0]))
+
+            with SessionLocal() as session:
+                parent = session.get(Article, article_id)
+                if not parent:
+                    raise NotFound("Article not found")
+
+                base_stmt = select(Article).where(Article.parent_article_id == article_id)
+                total = session.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
+
+                rows = session.execute(
+                    base_stmt
+                    .order_by(Article.published_at.desc().nulls_last(), Article.id.desc())
+                    .limit(limit)
+                    .offset(offset)
+                ).scalars().all()
+
+                self._json_ok({
+                    "id": article_id,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "items": [{
+                        "id": a.id,
+                        "source_id": a.source_id,
+                        "title": a.title,
+                        "link": a.link,
+                        "description": a.description,
+                        "guid": a.guid,
+                        "published_at": a.published_at,
+                        "fetched_at": a.fetched_at,
+                        "parent_article_id": a.parent_article_id,
+                    } for a in rows]
+                })
+
+        def get_article_parent(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
+                    raise NotFound("Article not found")
+
+                if not article.parent_article_id:
+                    return self._json_ok({"id": article_id, "parent": None})
+
+                parent = session.get(Article, article.parent_article_id)
+                if not parent:
+                    return self._json_ok({"id": article_id, "parent": None})
+
+                self._json_ok({
+                    "id": article_id,
+                    "parent": {
+                        "id": parent.id,
+                        "source_id": parent.source_id,
+                        "title": parent.title,
+                        "link": parent.link,
+                        "description": parent.description,
+                        "guid": parent.guid,
+                        "published_at": parent.published_at,
+                        "fetched_at": parent.fetched_at,
+                        "parent_article_id": parent.parent_article_id,
+                    }
+                })
 
         # Media (Local)
         def serve_media(self, match, query):

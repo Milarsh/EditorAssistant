@@ -1,9 +1,9 @@
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.db.db import SessionLocal
@@ -127,13 +127,57 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
         logger.write(f"[ERROR] TG invalid URL: {source.rss_url}")
         return 0
 
+    window_sec = 10
     added = 0
+
+    def is_child(msg: Message, title: str, description: Optional[str]) -> bool:
+        has_text = bool((msg.message or "").strip())
+        has_media = bool(getattr(msg, "media", None))
+        return (not has_text) and has_media and (description is None) and (title == f"https://t.me/{channel}/{msg.id}")
+
+    def find_parent_by_time(session, source_id: int, time) -> Optional[int]:
+        t0 = time - timedelta(seconds=window_sec)
+        t1 = time + timedelta(seconds=window_sec)
+        rows = session.execute(
+            select(Article.id, Article.published_at)
+            .where(
+                Article.source_id == source_id,
+                Article.parent_article_id.is_(None),
+                Article.description.is_not(None),
+                Article.published_at >= t0,
+                Article.published_at <= t1,
+            )
+        ).all()
+        if not rows:
+            return None
+        parent_id, _ = min(
+            rows,
+            key=lambda r: abs((r.published_at or time) - time)
+        )
+        return parent_id
+
+    def attach_children(session, parent_id: int, children_ids: list[int]) -> int:
+        if not children_ids:
+            return 0
+        res = session.execute(
+            update(Article)
+            .where(
+                Article.id.in_(children_ids),
+                Article.parent_article_id.is_(None)
+            )
+            .values(parent_article_id=parent_id)
+        )
+        session.commit()
+        return res.rowcount or 0
+
     try:
         async for msg in client.iter_messages(channel, limit=TG_FETCH_LIMIT):
             if not isinstance(msg, Message):
                 continue
 
             title, description, link, guid, published_at, fetched_at = _msg_to_article_fields(msg, channel)
+            has_text = bool((msg.message or "").strip())
+            is_child_var = is_child(msg, title, description)
 
             with SessionLocal() as session:
                 exists = session.scalar(
@@ -158,17 +202,51 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
                         published_at=published_at,
                         fetched_at=fetched_at,
                     )
+                    .returning(Article.id)
                     .on_conflict_do_nothing(index_elements=["source_id", "guid"])
                 )
-                res = session.execute(stmt)
-                if res.rowcount:
-                    session.commit()
-                    added += 1
-                    logger.write(f"[ADD] TG Source={source.name!r} Title={title!r}")
-                    try:
-                        await download_tg_media_for_message(client, msg, channel)
-                    except Exception as exception:
-                        logger.write(f"[WARN] TG media download failed for {channel}/{msg.id}: {exception}")
+                new_id = session.scalar(stmt)
+                if not new_id:
+                    session.rollback()
+                    continue
+
+                parent_id: Optional[int] = None
+
+                if has_text:
+                    parent_id = new_id
+                    t0 = published_at - timedelta(seconds=window_sec)
+                    t1 = published_at + timedelta(seconds=window_sec)
+                    orphan_ids = session.scalars(
+                        select(Article.id)
+                        .where(
+                            Article.source_id == source.id,
+                            Article.parent_article_id.is_(None),
+                            Article.description.is_(None),
+                            Article.title == Article.link,
+                            Article.published_at >= t0,
+                            Article.published_at <= t1,
+                        )
+                    ).all()
+                    if orphan_ids:
+                        updated = attach_children(session, parent_id, orphan_ids)
+                        if updated:
+                            logger.write(f"[LINK] TG time attached {updated} children to parent {parent_id}")
+                elif is_child_var:
+                    if parent_id is None:
+                        parent_id = find_parent_by_time(session, source.id, published_at)
+                    if parent_id:
+                        updated = attach_children(session, parent_id, [new_id])
+                        if updated:
+                            logger.write(f"[LINK] TG set parent {parent_id} for child {new_id}")
+
+                session.commit()
+                added += 1
+                logger.write(f"[ADD] TG Source={source.name!r} Title={title!r}")
+
+                try:
+                    await download_tg_media_for_message(client, msg, channel)
+                except Exception as exception:
+                    logger.write(f"[WARN] TG media download failed for {channel}/{msg.id}: {exception}")
 
     except FloodWaitError as error:
         wait_s = int(getattr(error, "seconds", TG_SLEEP_ON_FLOOD) or TG_SLEEP_ON_FLOOD)
