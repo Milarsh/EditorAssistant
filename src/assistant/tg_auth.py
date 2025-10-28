@@ -16,6 +16,7 @@ API_HASH = os.getenv("API_HASH", "")
 SESSION_FILE = "./secrets/" + os.getenv("TG_SESSION", "telegram.session")
 
 QR_TIMEOUT_SECONDS = int(os.getenv("TG_QR_TIMEOUT", "120"))
+SUBMIT_TIMEOUT = float(os.getenv("TG_AUTH_SUBMIT_TIMEOUT", "10"))
 
 
 _loop: asyncio.AbstractEventLoop | None = None
@@ -33,10 +34,14 @@ def _ensure_background_loop():
     _loop_thread.start()
     return _loop
 
-def _submit(coroutine: "asyncio.coroutines") -> Any:
+def _submit(coroutine: "asyncio.coroutines", timeout: float = SUBMIT_TIMEOUT) -> Any:
     loop = _ensure_background_loop()
     fut = asyncio.run_coroutine_threadsafe(coroutine, loop)
-    return fut.result()
+    try:
+        return fut.result(timeout=timeout)
+    except TimeoutError as error:
+        fut.cancel()
+        raise TimeoutError(f"submit timeout after {timeout}s") from error
 
 @dataclass
 class AuthState:

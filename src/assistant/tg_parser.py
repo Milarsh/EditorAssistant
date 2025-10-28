@@ -24,6 +24,7 @@ API_HASH = os.getenv("API_HASH", "")
 SESSION_FILE = "./secrets/" + os.getenv("TG_SESSION", "telegram.session")
 TG_FETCH_LIMIT = int(os.getenv("TG_FETCH_LIMIT", "100"))
 TG_SLEEP_ON_FLOOD = int(os.getenv("TG_SLEEP_ON_FLOOD", "60"))
+WINDOW_SEC = int(os.getenv("WINDOW_SEC", "10"))
 MEDIA_DIR = "./media"
 
 def _channel_from_url(url: str) -> Optional[str]:
@@ -100,7 +101,6 @@ async def download_tg_media_for_message(client: TelegramClient, msg: Message, ch
     try:
         if msg.media:
             try:
-                doc = getattr(msg, "document", None)
                 await client.download_media(msg, file=str(dest_dir))
             except Exception as exception:
                 pass
@@ -116,10 +116,10 @@ async def download_tg_media_for_message(client: TelegramClient, msg: Message, ch
         rel_urls.append(f"/media/{rel}")
 
         ext = path.suffix.lower()
-        type = "image" if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else (
+        media_type = "image" if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else (
             "video" if ext in {".mp4", ".mov", ".mkv", ".webm"} else "file"
         )
-        manifest.append({"type": type, "file": path.name})
+        manifest.append({"type": media_type, "file": path.name})
     _save_manifest(dest_dir, manifest)
     return rel_urls
 
@@ -130,7 +130,6 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
         logger.write(f"[ERROR] TG invalid URL: {source.rss_url}")
         return 0
 
-    window_sec = 10
     added = 0
 
     def is_child(msg: Message, title: str, description: Optional[str]) -> bool:
@@ -139,8 +138,8 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
         return (not has_text) and has_media and (description is None) and (title == f"https://t.me/{channel}/{msg.id}")
 
     def find_parent_by_time(session, source_id: int, time) -> Optional[int]:
-        t0 = time - timedelta(seconds=window_sec)
-        t1 = time + timedelta(seconds=window_sec)
+        t0 = time - timedelta(seconds=WINDOW_SEC)
+        t1 = time + timedelta(seconds=WINDOW_SEC)
         rows = session.execute(
             select(Article.id, Article.published_at)
             .where(
@@ -217,8 +216,8 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
 
                 if has_text:
                     parent_id = new_id
-                    t0 = published_at - timedelta(seconds=window_sec)
-                    t1 = published_at + timedelta(seconds=window_sec)
+                    t0 = published_at - timedelta(seconds=WINDOW_SEC)
+                    t1 = published_at + timedelta(seconds=WINDOW_SEC)
                     orphan_ids = session.scalars(
                         select(Article.id)
                         .where(

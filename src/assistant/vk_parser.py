@@ -79,9 +79,9 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) 
     doc_index = 0
 
     for attachment in attachments:
-        type = attachment.get("type")
-        obj = attachment.get(type) or {}
-        if type == "photo":
+        media_type = attachment.get("type")
+        obj = attachment.get(media_type) or {}
+        if media_type == "photo":
             url = _best_photo_url(obj)
             if not url:
                 continue
@@ -91,7 +91,7 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) 
                 rel = Path("vk") / str(owner_id) / str(post_id) / file_name
                 rel_urls.append(f"/media/{rel.as_posix()}")
                 manifest.append({"type": "photo", "file": file_name, "src": url})
-        elif type == "doc":
+        elif media_type == "doc":
             file_url = obj.get("url")
             ext = (obj.get("ext") or "bin").split("?")[0][:8]
             doc_index += 1
@@ -100,7 +100,7 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) 
                 rel = Path("vk") / str(owner_id) / str(post_id) / file_name
                 rel_urls.append(f"/media/{rel.as_posix()}")
                 manifest.append({"type": "doc", "file": file_name, "src": file_url})
-        elif type == "video":
+        elif media_type == "video":
             owner = obj.get("owner_id")
             video = obj.get("id")
             if owner is not None and video is not None:
