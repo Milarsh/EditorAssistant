@@ -1,5 +1,6 @@
 import os
 import asyncio
+import platform
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -59,9 +60,11 @@ class TelegramAuthManager:
             raise RuntimeError("API_ID/API_HASH are not set")
         Path(os.path.dirname(SESSION_FILE)).mkdir(parents=True, exist_ok=True)
         if self._client is None:
-            self._client = TelegramClient(SESSION_FILE, API_ID, API_HASH, device_model="EditorAssistantHost",
-                                          system_version="1.0.0", app_version="1.0.0", system_lang_code="ru-RU",
-                                          lang_code="ru")
+            self._client = TelegramClient(
+                SESSION_FILE, API_ID, API_HASH, device_model=platform.node() + " " + platform.machine(),
+                system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
+                lang_code="ru"
+            )
         if not self._client.is_connected():
             await self._client.connect()
         return self._client

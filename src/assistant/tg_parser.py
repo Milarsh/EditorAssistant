@@ -1,5 +1,6 @@
 import os
 import asyncio
+import platform
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -56,9 +57,11 @@ async def _ensure_client():
     last_error = None
     for i in range(retries):
         try:
-            client = TelegramClient(SESSION_FILE, API_ID, API_HASH, device_model="EditorAssistantHost",
-                                    system_version="1.0.0", app_version="1.0.0", system_lang_code="ru-RU",
-                                    lang_code="ru")
+            client = TelegramClient(
+                SESSION_FILE, API_ID, API_HASH, device_model=platform.node() + " " + platform.machine(),
+                system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
+                lang_code="ru"
+            )
             await client.connect()
             if not await client.is_user_authorized():
                 await client.disconnect()
