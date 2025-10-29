@@ -1,0 +1,14 @@
+---
+include:
+  - project: games/cicd
+    file: /templates/gitlab/Front-All.gitlab-ci.yml
+
+variables:
+  PROJECT_ALIAS: one-cupis-game
+  RELEASE_NAME: ${PROJECT_ALIAS}-web
+  BASE_DOMAIN: prisma-games.ru
+  SUBDOMAIN: ${PROJECT_ALIAS}
+  IMAGE_NAME: ${REGISTRY}/${PROJECT_ALIAS}/cupis-tree/web
+  IMAGE: ${IMAGE_NAME}:${IMAGE_TAG}
+  VIRTUAL_HOST: ${SUBDOMAIN}.${BASE_DOMAIN}
+  CDN: false

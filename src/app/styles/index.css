@@ -1,0 +1,8 @@
+/* Tailwind */
+@import 'tailwindcss';
+
+/* Globals */
+@import './globals.css';
+@import './utils.css';
+
+/* Fonts */

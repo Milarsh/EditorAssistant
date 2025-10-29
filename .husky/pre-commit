@@ -1,0 +1,3 @@
+#!/bin/bash
+node check-folder-names.js &&
+yarn lint-staged

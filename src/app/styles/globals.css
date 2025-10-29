@@ -1,0 +1,27 @@
+html,
+body {
+  @apply m-0 h-full;
+}
+
+body {
+  font-family: sans-serif;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+img {
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+html,
+body,
+#root {
+  overscroll-behavior: none;
+  overflow: hidden;
+}
