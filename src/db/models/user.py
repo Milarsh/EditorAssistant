@@ -6,6 +6,8 @@ from datetime import datetime
 class User(Base):
     __tablename__ = "users"
 
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
     email: Mapped[str] = mapped_column(
         String(320), nullable=False, unique=True, index=True
     )
