@@ -146,6 +146,15 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("POST", re.compile(r"^/api/tg/auth/qr$"), "tg_auth_start_qr"),
             ("POST", re.compile(r"^/api/tg/auth/2fa$"), "tg_auth_2fa"),
             ("POST", re.compile(r"^/api/tg/auth/logout$"), "tg_auth_logout"),
+            # auth (email)
+            ("POST", re.compile(r"^/api/auth/register$"), "auth_register"),
+            ("POST", re.compile(r"^/api/auth/register/confirm$"), "auth_register_confirm"),
+            ("POST", re.compile(r"^/api/auth/login$"), "auth_login"),
+            ("POST", re.compile(r"^/api/auth/logout$"), "auth_logout"),
+            ("GET", re.compile(r"^/api/auth/whoami$"), "auth_whoami"),
+            ("POST", re.compile(r"^/api/auth/email/resend$"), "auth_email_resend"),
+            ("POST", re.compile(r"^/api/auth/password/send-code$"), "auth_password_send_code"),
+            ("POST", re.compile(r"^/api/auth/password/reset$"), "auth_password_reset"),
         ]
 
         def do_GET(self): self._dispatch("GET")
