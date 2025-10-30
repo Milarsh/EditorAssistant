@@ -28,8 +28,7 @@ class Session(Base):
         DateTime(timezone=True), nullable=False, index=True
     )
     revoked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable
-        =True, index=True
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     ip_first: Mapped[str | None] = mapped_column(String(45), nullable=True)
