@@ -43,7 +43,7 @@ class User(Base):
         ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
     )
     sessions: Mapped[list["Session"]] = relationship(
-        "Session", back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+        "Session", back_populates="user", cascade="all, delete-orphan", passive_deletes=True, foreign_keys="Session.user_id"
     )
     current_session: Mapped["Session | None"] = relationship(
         "Session", primaryjoin="User.current_session_id==Session.id", viewonly=True, uselist=False

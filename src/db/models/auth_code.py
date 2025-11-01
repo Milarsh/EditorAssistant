@@ -1,5 +1,5 @@
 from src.db.models.base import Base
-from sqlalchemy import String, DateTime, Integer, Index, ForeignKey, UniqueConstraint, Enum
+from sqlalchemy import String, DateTime, Integer, ForeignKey, UniqueConstraint, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 
@@ -13,7 +13,7 @@ class AuthCode(Base):
         nullable=False, index=True
     )
 
-    AuthCodePurpose = Enum("email_confirm", "password_reset", "auth_code_purpose")
+    AuthCodePurpose = Enum("email_confirm", "password_reset", name="auth_code_purpose")
     purpose: Mapped[str] = mapped_column(AuthCodePurpose, nullable=False, index=True)
 
     code_hash: Mapped[str] = mapped_column(String(255), nullable=False)

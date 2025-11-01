@@ -40,13 +40,10 @@ class Session(Base):
 
     remember_me: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    user: Mapped["User"] = relationship(back_populates="sessions")
+    user: Mapped["User"] = relationship("User", back_populates="sessions", foreign_keys=[user_id])
 
     __table_args__ = (
         UniqueConstraint("session_hash", name="uq_sessions_hash"),
-        Index("ix_sessions_user_id", "user_id"),
-        Index("ix_sessions_expires_at", "expires_at"),
-        Index("ix_sessions_revoked_at", "revoked_at"),
         Index(
             "uq_sessions_user_active",
             "user_id",
