@@ -12,6 +12,7 @@ tags:
 - name: Articles
 - name: Media
 - name: TelegramAuth
+- name: Settings
 paths:
   /healthz:
     get:
@@ -392,6 +393,69 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
 
+  /api/settings:
+    get:
+      tags:
+        - Settings
+      summary: Список настроек
+      parameters:
+        - $ref: '#/components/parameters/SettingsCodes'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsList'
+              examples:
+                ok:
+                  value:
+                    - id: 1
+                      code: tg.enabled
+                      value: "1"
+                    - id: 2
+                      code: parser.interval
+                      value: "60"
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - Settings
+      summary: Создать или обновить настройку
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingUpdate'
+            examples:
+              sample:
+                value:
+                  code: tg.enabled
+                  value: "1"
+      responses:
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Setting'
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Setting'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+
 components:
   parameters:
     Id:
@@ -476,6 +540,16 @@ components:
         type: string
         enum: [asc, desc]
         default: desc
+    SettingsCodes:
+      name: codes
+      in: query
+      required: false
+      description: >
+        Список кодов настроек через запятую. Если не указан —
+        возвращаются все настройки.
+      schema:
+        type: string
+        example: "tg.enabled,parser.interval"
   schemas:
     Error:
       type: object
@@ -750,6 +824,43 @@ components:
           example: bad_password
         user:
           $ref: '#/components/schemas/TgAuthUser'
+
+    Setting:
+      type: object
+      required:
+        - id
+        - code
+        - value
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          description: Код настройки (уникальный)
+          example: tg.enabled
+        value:
+          type: string
+          description: Строковое значение настройки
+          example: "1"
+
+    SettingsList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Setting'
+
+    SettingUpdate:
+      type: object
+      required:
+        - code
+        - value
+      properties:
+        code:
+          type: string
+          minLength: 1
+          example: tg.enabled
+        value:
+          type: string
+          example: "1"
 
   responses:
     BadRequest:

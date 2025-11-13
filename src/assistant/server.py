@@ -506,63 +506,62 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
         # Settings
         def list_settings(self, match, query):
-            codes = (query.get("codes", [""])[0] or "").strip()
-            codes = codes.split(",")
-            for i in range (len(codes)):
-                if !(codes[i].split()):
-                    codes.pop(i)
-                codes[i] = codes[i].split()
+            raw_codes = (query.get("codes", [""])[0] or "").strip()
+            codes = [c.strip() for c in raw_codes.split(",") if c.strip()] if raw_codes else []
 
-            with SessionLocal as session:
+            with SessionLocal() as session:
                 stmt = select(Settings)
-
+                if codes:
+                    stmt = stmt.where(Settings.code.in_(codes))
                 stmt = stmt.order_by(Settings.code.asc())
 
                 rows = session.execute(stmt).scalars().all()
 
-                self._json_ok([{
-                    "id": setting.id,
-                    "code": setting.code,
-                    "value": setting.value
-                } for setting in rows])
+                self._json_ok([
+                    {
+                        "id": s.id,
+                        "code": s.code,
+                        "value": s.value,
+                    }
+                    for s in rows
+                ])
 
-        def update_settings(selft, match, query):
+        def update_settings(self, match, query):
             body = parse_json_body(self) or {}
 
             code = (body.get("code") or "").strip()
             value = body.get("value")
 
-            err = {}
-            if !(code):
-                err["code"] = "Required code"
-            if !(value):
-                err["value"] = "Required value"
-            if err:
-                raise ValidationError("Invalid required fields", details=err)
+            errors = {}
+            if not code:
+                errors["code"] = "Required"
+            if value is None:
+                errors["value"] = "Required"
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
             
             with SessionLocal() as session:
-                sett = session.execute(
-                    select(Settings).(Settings.code == code)
-                ).scalar()
+                stmt = session.execute(
+                    select(Settings).where(Settings.code == code)
+                ).scalar_one_or_none()
 
-                if sett:
-                    sett.value = value
-                    action = "updated"
+                if stmt:
+                    stmt.value = str(value)
+                    status = 200
                 else:
-                    sett = Settings(id=sett.id, code=code, value=value)
-                    session.add(sett)
-                    action = "created"
+                    stmt = Settings(id=stmt.id, code=code, value=value)
+                    session.add(stmt)
+                    status = 201
                 
                 session.commit()
-                session.refresh(sett)
+                session.refresh(stmt)
 
                 res = {
-                    "id": sett.id,
-                    "code": sett.code,
-                    "value": sett.value
+                    "id": stmt.id,
+                    "code": stmt.code,
+                    "value": stmt.value
                 }
 
-                status = 201 if action == "created" else 200
                 self._json_ok(res, status=status)
 
         # Media (Local)

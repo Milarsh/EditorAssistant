@@ -1,10 +1,16 @@
 from src.db.models.base import Base
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import Text, ForeignKey, Index, UniqueConstraint, CheckConstraint
+from sqlalchemy import Text, Index, UniqueConstraint
+
 
 class Settings(Base):
     __tablename__ = "settings"
 
-    id: Mapped[int] = mapped_column()
-    code: Mapped[str] = mapped_column()
-    value: Mapped[int] = mapped_column()
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_settings_code"),
+        Index("ix_settings_code", "code"),
+    )

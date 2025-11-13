@@ -8,7 +8,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://editor:editor_pwd
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 
-REQUIRED_TABLES = {"sources", "articles"}
+REQUIRED_TABLES = {"sources", "articles", "settings"}
 
 def create_schema():
     import src.db.models.source # noqa: F401
