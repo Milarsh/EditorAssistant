@@ -1,4 +1,3 @@
-import os
 import time
 from datetime import datetime, timezone
 
@@ -7,7 +6,7 @@ from src.assistant.rss_parser import run_rss_cycle
 from src.assistant.tg_parser import run_tg_cycle
 from src.utils.logger import Logger
 
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
+from src.utils.settings import get_setting_int
 
 logger = Logger("parser")
 
@@ -27,7 +26,7 @@ def run_cycle():
 def main():
     logger.ensure_log_dir()
     logger.write("[PARSER] Parser started")
-    interval = POLL_INTERVAL
+    interval = get_setting_int("poll_interval", 300)
     while True:
         run_cycle()
         time.sleep(interval)
