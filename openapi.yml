@@ -12,6 +12,7 @@ tags:
 - name: Articles
 - name: Media
 - name: TelegramAuth
+- name: Authorization
 - name: Settings
 paths:
   /healthz:
@@ -392,6 +393,173 @@ paths:
                 $ref: '#/components/schemas/TgAuthStatus'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /api/auth/register:
+    post:
+      operationId: auth_register
+      summary: Регистрация пользователя и первичная отправка кода подтверждения
+      tags: [ Authorization ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRegisterRequest' }
+      responses:
+        "201":
+          description: Код сгенерирован, пользователь создан в статусе inactive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRegisterPendingResponse' }
+        "400": { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "409": { description: Email или login заняты, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "429": { description: Лимит переотправок на жизнь кода, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/register/resend:
+    post:
+      operationId: auth_register_resend
+      summary: Переотправка кода подтверждения e-mail
+      tags: [ Authorization ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRegisterResendRequest' }
+      responses:
+        "200":
+          description: Код переотправлен / уже подтверждён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRegisterResendResponse' }
+        "400": { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "404": { description: Пользователь не найден, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "429": { description: Лимит переотправок, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/register/confirm:
+    post:
+      operationId: auth_register_confirm
+      summary: Подтверждение e-mail кодом
+      tags: [ Authorization ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRegisterConfirmRequest' }
+      responses:
+        "200":
+          description: Подтверждён / уже подтверждён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRegisterConfirmResponse' }
+        "400": { description: Неверный/просроченный код или нет активного кода, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "404": { description: Пользователь не найден, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "429": { description: Лимит попыток ввода кода, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/register/status:
+    get:
+      operationId: auth_register_status
+      summary: Статус подтверждения регистрации
+      tags: [ Authorization ]
+      parameters:
+        - in: query
+          name: email
+          required: true
+          schema: { type: string, format: email }
+      responses:
+        "200":
+          description: Текущий статус регистрации
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRegisterStatusResponse' }
+        "400": { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "404": { description: Пользователь не найден, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/login:
+    post:
+      operationId: auth_login
+      summary: Вход по login/email и паролю (серверные сессии)
+      tags: [ Authorization ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthLoginRequest' }
+      responses:
+        "200":
+          description: Успешный вход, возвращён bearer-токен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthLoginResponse' }
+        "400": { description: Ошибка валидации/отсутствуют поля, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "401": { description: Неверные учётные данные, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "403": { description: Email не подтверждён, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/logout:
+    post:
+      operationId: auth_logout
+      summary: Выход (ревокация текущей сессии)
+      tags: [ Authorization ]
+      security: [ { bearerAuth: [ ] } ]
+      responses:
+        "200":
+          description: Сессия отозвана или была отозвана ранее
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogoutResponse' }
+        "401": { description: Неавторизован/невалидная сессия, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/whoami:
+    get:
+      operationId: auth_whoami
+      summary: Текущий пользователь по bearer-токену
+      tags: [ Authorization ]
+      security: [ { bearerAuth: [ ] } ]
+      responses:
+        "200":
+          description: Профиль авторизованного пользователя
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhoAmIResponse' }
+        "401": { description: Неавторизован/истёкшая/отозванная сессия, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "409": { description: Конфликт single-session (mismatch), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/password/send-code:
+    post:
+      operationId: auth_password_send_code
+      summary: Отправка/переотправка кода на сброс пароля
+      tags: [ Authorization ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordSendCodeRequest' }
+      responses:
+        "200":
+          description: Код отправлен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PasswordSendCodeResponse' }
+        "400": { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "404": { description: Пользователь не найден, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "429": { description: Лимит переотправок, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/auth/password/reset:
+    post:
+      operationId: auth_password_reset
+      summary: Подтверждение кода и установка нового пароля
+      tags: [ Authorization ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetRequest' }
+      responses:
+        "200":
+          description: Пароль изменён (активные сессии отозваны)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PasswordResetResponse' }
+        "400": { description: Неверный/просроченный код или нет активного кода, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "404": { description: Пользователь не найден, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "429": { description: Лимит попыток ввода кода, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /api/settings:
     get:
@@ -457,6 +625,11 @@ paths:
 
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Opaque token
   parameters:
     Id:
       name: id
@@ -824,6 +997,123 @@ components:
           example: bad_password
         user:
           $ref: '#/components/schemas/TgAuthUser'
+    AuthRegisterRequest:
+      type: object
+      required: [ email, login, password, password_confirm ]
+      properties:
+        email: { type: string, format: email, example: user@example.com }
+        login: { type: string, example: user123 }
+        password: { type: string, format: password, minLength: 8 }
+        password_confirm: { type: string, format: password }
+    AuthRegisterPendingResponse:
+      type: object
+      required: [ status, email, login, code_ttl_sec, send_count ]
+      properties:
+        status: { type: string, enum: [ pending ] }
+        email: { type: string, format: email }
+        login: { type: string }
+        code_ttl_sec: { type: integer, example: 900 }
+        send_count: { type: integer, example: 1 }
+
+    AuthRegisterConfirmRequest:
+      type: object
+      required: [ email, code ]
+      properties:
+        email: { type: string, format: email }
+        code: { type: string, example: "123456" }
+    AuthRegisterConfirmResponse:
+      type: object
+      required: [ status ]
+      properties:
+        status: { type: string, enum: [ confirmed, already_confirmed ] }
+
+    AuthRegisterResendRequest:
+      type: object
+      required: [ email ]
+      properties:
+        email: { type: string, format: email }
+    AuthRegisterResendResponse:
+      type: object
+      required: [ status, send_count, code_ttl_sec ]
+      properties:
+        status: { type: string, enum: [ resent, already_confirmed ] }
+        send_count: { type: integer }
+        code_ttl_sec: { type: integer }
+
+    AuthRegisterStatusResponse:
+      type: object
+      required: [ status ]
+      properties:
+        status:
+          type: string
+          enum: [ pending, confirmed ]
+        code:
+          nullable: true
+          type: object
+          properties:
+            send_count: { type: integer }
+            input_count: { type: integer }
+            ttl_sec: { type: integer }
+
+    AuthLoginRequest:
+      type: object
+      required: [ password ]
+      properties:
+        login: { type: string, description: "Либо login, либо email" }
+        email: { type: string, format: email, description: "Либо email, либо login" }
+        password: { type: string, format: password }
+        remember: { type: boolean, default: false }
+    AuthLoginResponse:
+      type: object
+      required: [ access_token, token_type, expires_at ]
+      properties:
+        access_token: { type: string, description: "Opaque bearer token" }
+        token_type: { type: string, example: bearer }
+        expires_at: { type: string, format: date-time, example: 2025-10-30T09:00:00Z }
+
+    WhoAmIResponse:
+      type: object
+      required: [ id, email, login, is_active ]
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        login: { type: string }
+        is_active: { type: boolean }
+        email_confirmed_at: { type: string, format: date-time, nullable: true }
+        last_login_at: { type: string, format: date-time, nullable: true }
+        last_login_ip: { type: string, nullable: true }
+
+    LogoutResponse:
+      type: object
+      required: [ status ]
+      properties:
+        status: { type: string, enum: [ revoked, already_revoked ] }
+
+    PasswordSendCodeRequest:
+      type: object
+      required: [ email ]
+      properties:
+        email: { type: string, format: email }
+    PasswordSendCodeResponse:
+      type: object
+      required: [ status, code_ttl_sec ]
+      properties:
+        status: { type: string, enum: [ sent ] }
+        code_ttl_sec: { type: integer }
+
+    PasswordResetRequest:
+      type: object
+      required: [ email, code, new_password, new_password_confirm ]
+      properties:
+        email: { type: string, format: email }
+        code: { type: string, example: "123456" }
+        new_password: { type: string, format: password, minLength: 8 }
+        new_password_confirm: { type: string, format: password }
+    PasswordResetResponse:
+      type: object
+      required: [ status ]
+      properties:
+        status: { type: string, enum: [ password_changed ] }
 
     Setting:
       type: object

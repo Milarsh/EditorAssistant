@@ -22,6 +22,8 @@ from urllib.parse import unquote
 
 from src.assistant.tg_auth import start_qr_sync, status_sync, submit_password_sync, logout_sync
 
+from src.assistant.auth import register_auth_endpoints
+
 MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
 
 def _safe_join(base: str, *parts: str) -> Path:
@@ -60,7 +62,7 @@ class ApiError(Exception):
     details: Optional[Dict[str, Any]] = field(default=None)
 
     def __post_init__(self):
-        super().__init__(self.message)
+        Exception.__init__(self, self.message)
 
 @dataclass(slots=True)
 class ValidationError(ApiError):
@@ -157,7 +159,6 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def do_DELETE(self): self._dispatch("DELETE")
 
         def _dispatch(self, method: str):
-            # rate limiting по IP
             ip = self.address_string()
             try:
                 _rate_check(ip)
@@ -172,11 +173,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     if match:
                         try:
                             handler = getattr(self, handler_name)
+                            if hasattr(self, "_auth_guard"):
+                                self._auth_guard(handler_name)
                             return handler(match, parse_qs(parsed.query))
                         except ApiError as error:
                             return self._json_error(error.status, error.code, str(error), error.details)
                         except IntegrityError as error:
-                            # дубликаты/уникальные ограничения и пр.
                             return self._json_error(409, "conflict", "Database constraint violation", {"detail": str(error.orig)})
                         except Exception as error:
                             print(f"[ERROR] {method} {path}: {error}")
@@ -188,8 +190,26 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin if origin != "null" else "*")
+                self.send_header("Vary", "Origin")
+            else:
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
             self.end_headers()
             self.wfile.write(body)
+
+        def do_OPTIONS(self):
+            origin = self.headers.get("Origin") or "*"
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", origin if origin != "null" else "*")
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Max-Age", "86400")
+            self.end_headers()
 
         def _json_ok(self, payload, status=200):
             self._send(status, json_bytes(payload), "application/json; charset=utf-8")
@@ -667,6 +687,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def not_impl(self, match, query):
             raise ApiError("Endpoint will be implemented later", status=501, code="not_implemented")
 
+    register_auth_endpoints(Handler, Handler.routes)
     httpd = HTTPServer((host, port), Handler)
     print(f"Server listening on {host}:{port}")
     httpd.serve_forever()
