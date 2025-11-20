@@ -9,6 +9,7 @@ from collections import deque, defaultdict
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
+from src.db.models.settings import Settings
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
@@ -141,6 +142,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
             ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
             ("GET", re.compile(r"^/api/articles/(\d+)/parent$"), "get_article_parent"),
+            # settings
+            ("GET", re.compile(r"^/api/settings$"), "list_settings"), # ave
+            ("POST", re.compile(r"^/api/settings$"), "update_settings"), # ave
             # media (local)
             ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
             # telegram auth
@@ -519,6 +523,66 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "parent_article_id": parent.parent_article_id,
                     }
                 })
+
+        # Settings
+        def list_settings(self, match, query):
+            raw_codes = (query.get("codes", [""])[0] or "").strip()
+            codes = [c.strip() for c in raw_codes.split(",") if c.strip()] if raw_codes else []
+
+            with SessionLocal() as session:
+                stmt = select(Settings)
+                if codes:
+                    stmt = stmt.where(Settings.code.in_(codes))
+                stmt = stmt.order_by(Settings.code.asc())
+
+                rows = session.execute(stmt).scalars().all()
+
+                self._json_ok([
+                    {
+                        "id": s.id,
+                        "code": s.code,
+                        "value": s.value,
+                    }
+                    for s in rows
+                ])
+
+        def update_settings(self, match, query):
+            body = parse_json_body(self) or {}
+
+            code = (body.get("code") or "").strip()
+            value = body.get("value")
+
+            errors = {}
+            if not code:
+                errors["code"] = "Required"
+            if value is None:
+                errors["value"] = "Required"
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+            
+            with SessionLocal() as session:
+                stmt = session.execute(
+                    select(Settings).where(Settings.code == code)
+                ).scalar_one_or_none()
+
+                if stmt:
+                    stmt.value = str(value)
+                    status = 200
+                else:
+                    stmt = Settings(id=stmt.id, code=code, value=value)
+                    session.add(stmt)
+                    status = 201
+                
+                session.commit()
+                session.refresh(stmt)
+
+                res = {
+                    "id": stmt.id,
+                    "code": stmt.code,
+                    "value": stmt.value
+                }
+
+                self._json_ok(res, status=status)
 
         # Media (Local)
         def serve_media(self, match, query):
