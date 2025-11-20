@@ -569,7 +569,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     stmt.value = str(value)
                     status = 200
                 else:
-                    stmt = Settings(id=stmt.id, code=code, value=value)
+                    stmt = Settings(code=code, value=value)
                     session.add(stmt)
                     status = 201
                 
