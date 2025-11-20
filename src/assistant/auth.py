@@ -19,6 +19,8 @@ from src.utils.logger import Logger
 from src.utils.mailer import send_email, build_confirm_email, build_reset_email
 
 # Config
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+
 PASSWORD_MIN_LEN     = int(os.getenv("PASSWORD_MIN_LEN", "8"))
 AUTH_CODE_LEN        = int(os.getenv("AUTH_CODE_LEN", "6"))
 AUTH_CODE_TTL_MIN    = int(os.getenv("AUTH_CODE_TTL_MIN", "30"))
@@ -596,7 +598,7 @@ PUBLIC_HANDLERS = {
 }
 
 def _auth_guard(self, handler_name: str):
-    if handler_name in PUBLIC_HANDLERS:
+    if handler_name in PUBLIC_HANDLERS or not AUTH_ENABLED:
         return
     from src.assistant.server import ApiError
     token = _extract_bearer(self)
