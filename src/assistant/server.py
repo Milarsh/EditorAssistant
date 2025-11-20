@@ -687,6 +687,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def not_impl(self, match, query):
             raise ApiError("Endpoint will be implemented later", status=501, code="not_implemented")
 
+    from src.utils.settings import ensure_base_settings
+    ensure_base_settings()
+
     register_auth_endpoints(Handler, Handler.routes)
     httpd = HTTPServer((host, port), Handler)
     print(f"Server listening on {host}:{port}")
