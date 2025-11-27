@@ -3,7 +3,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.models.base import Base
 
-class NewsKeyWord(Base):
+class ArticleKeyWord(Base):
     __tablename__ = "article_key_word"
 
     entity_id: Mapped[int] = mapped_column(Integer, primary_key=True)

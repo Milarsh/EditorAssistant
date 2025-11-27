@@ -14,6 +14,8 @@ tags:
 - name: TelegramAuth
 - name: Authorization
 - name: Settings
+- name: StopWords
+- name: KeyWords
 paths:
   /healthz:
     get:
@@ -623,6 +625,323 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/stop-categories:
+    get:
+      tags: [ StopWords ]
+      summary: Список категорий стоп-слов
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopCategoriesList'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [ StopWords ]
+      summary: Создать или обновить категорию стоп-слов
+      description: |
+        Если передан `id` — обновляет существующую категорию.
+        Если `id` не передан — создаёт новую категорию.
+        Символьный код `code` генерируется автоматически из `title`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopCategoryUpsertRequest'
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopCategory'
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopCategory'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/stop-categories/{id}:
+    delete:
+      tags: [ StopWords ]
+      summary: Удалить категорию стоп-слов
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Удалено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: deleted }
+                  id: { type: integer, example: 1 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/rubrics:
+    get:
+      tags: [ KeyWords ]
+      summary: Список рубрик
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RubricsList'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [ KeyWords ]
+      summary: Создать или обновить рубрику
+      description: |
+        Если передан `id` — обновляет существующую рубрику.
+        Если `id` не передан — создаёт новую рубрику.
+        Символьный код `code` генерируется автоматически из `title`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RubricUpsertRequest'
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rubric'
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rubric'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/rubrics/{id}:
+    delete:
+      tags: [ KeyWords ]
+      summary: Удалить рубрику
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Удалено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: deleted }
+                  id: { type: integer, example: 1 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/stop-words:
+    get:
+      tags: [ StopWords ]
+      summary: Список стоп-слов
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopWordsList'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [ StopWords ]
+      summary: Создать или обновить стоп-слово
+      description: |
+        Если передан `id` — обновляет существующее стоп-слово.
+        Если `id` не передан — создаёт новое.
+        Символьный код `code` генерируется автоматически из `value`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopWordUpsertRequest'
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopWord'
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopWord'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }      # если категория не найдена
+        '409': { $ref: '#/components/responses/Conflict' }       # дубликат по code
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/stop-words/{id}:
+    delete:
+      tags: [ StopWords ]
+      summary: Удалить стоп-слово
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Удалено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: deleted }
+                  id: { type: integer, example: 1 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/key-words:
+    get:
+      tags: [ KeyWords ]
+      summary: Список ключевых слов
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyWordsList'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [ KeyWords ]
+      summary: Создать или обновить ключевое слово
+      description: |
+        Если передан `id` — обновляет существующее ключевое слово.
+        Если `id` не передан — создаёт новое.
+        Символьный код `code` генерируется автоматически из `value`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KeyWordUpsertRequest'
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyWord'
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyWord'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }      # если рубрика не найдена
+        '409': { $ref: '#/components/responses/Conflict' }       # дубликат по code
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/key-words/{id}:
+    delete:
+      tags: [ KeyWords ]
+      summary: Удалить ключевое слово
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Удалено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: deleted }
+                  id: { type: integer, example: 1 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/articles/{id}/stats:
+    get:
+      tags: [ Articles ]
+      summary: Статистика по стоп- и ключевым словам для статьи
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleStat'
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/articles/{id}/stop-words:
+    get:
+      tags:
+        - StopWords
+      summary: Стоп-слова, найденные в статье
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleStopWordsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/articles/{id}/key-words:
+    get:
+      tags:
+        - KeyWords
+      summary: Ключевые слова, найденные в статье
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleKeyWordsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
 
 components:
   securitySchemes:
@@ -1151,6 +1470,194 @@ components:
         value:
           type: string
           example: "1"
+
+    ArticleStopWordsResponse:
+      type: object
+      required: [id, items]
+      properties:
+        id:
+          type: integer
+          description: ID статьи
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopWord'
+
+    ArticleKeyWordsResponse:
+      type: object
+      required: [id, items]
+      properties:
+        id:
+          type: integer
+          description: ID статьи
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyWord'
+
+
+    StopCategory:
+      type: object
+      required: [ id, code, title ]
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          description: Символьный код (slug), генерируется автоматически
+        title:
+          type: string
+          description: Название категории
+
+    StopCategoriesList:
+      type: array
+      items:
+        $ref: '#/components/schemas/StopCategory'
+
+    StopCategoryUpsertRequest:
+      type: object
+      required: [ title ]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Если передан — будет выполнено обновление записи
+        title:
+          type: string
+          minLength: 1
+          description: Название категории
+
+    Rubric:
+      type: object
+      required: [ id, code, title ]
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          description: Символьный код (slug), генерируется автоматически
+        title:
+          type: string
+          description: Название рубрики
+
+    RubricsList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Rubric'
+
+    RubricUpsertRequest:
+      type: object
+      required: [ title ]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Если передан — будет выполнено обновление записи
+        title:
+          type: string
+          minLength: 1
+          description: Название рубрики
+
+    StopWord:
+      type: object
+      required: [ id, code, value, category_id ]
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          description: Символьный код слова, генерируется из value
+        value:
+          type: string
+          description: Текст стоп-слова
+        category_id:
+          type: integer
+          description: ID категории стоп-слова
+
+    StopWordsList:
+      type: array
+      items:
+        $ref: '#/components/schemas/StopWord'
+
+    StopWordUpsertRequest:
+      type: object
+      required: [ value, category_id ]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Если передан — будет выполнено обновление записи
+        value:
+          type: string
+          minLength: 1
+          description: Текст стоп-слова
+        category_id:
+          type: integer
+          minimum: 1
+          description: ID категории, к которой относится стоп-слово
+
+    KeyWord:
+      type: object
+      required: [ id, code, value, rubric_id ]
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+          description: Символьный код слова, генерируется из value
+        value:
+          type: string
+          description: Текст ключевого слова
+        rubric_id:
+          type: integer
+          description: ID рубрики, к которой относится ключевое слово
+
+    KeyWordsList:
+      type: array
+      items:
+        $ref: '#/components/schemas/KeyWord'
+
+    KeyWordUpsertRequest:
+      type: object
+      required: [ value, rubric_id ]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Если передан — будет выполнено обновление записи
+        value:
+          type: string
+          minLength: 1
+          description: Текст ключевого слова
+        rubric_id:
+          type: integer
+          minimum: 1
+          description: ID рубрики
+
+    ArticleStat:
+      type: object
+      required: [ entity_id, stop_words_count, key_words_count ]
+      properties:
+        entity_id:
+          type: integer
+          description: ID новости (статьи)
+        stop_words_count:
+          type: integer
+          minimum: 0
+          description: Количество уникальных стоп-слов, найденных в статье
+        key_words_count:
+          type: integer
+          minimum: 0
+          description: Количество уникальных ключевых слов, найденных в статье
+        rubric_id:
+          type: integer
+          nullable: true
+          description: Рубрика с наибольшим количеством ключевых слов
+        stop_category_id:
+          type: integer
+          nullable: true
+          description: Категория с наибольшим количеством стоп-слов
+
 
   responses:
     BadRequest:
