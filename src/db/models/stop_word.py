@@ -8,6 +8,6 @@ class StopWord(Base):
     __tablename__ = "stop_word"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    word: Mapped[str] = mapped_column(String(128), nullable=False)
-
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    value: Mapped[str] = mapped_column(String(256), nullable=False)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("category.id"), nullable=False)
