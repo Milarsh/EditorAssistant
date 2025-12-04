@@ -121,11 +121,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
-        - $ref: '#/components/parameters/SourceId'   # если у вас уже есть такой параметр
-        - $ref: '#/components/parameters/Q'          # если у вас уже есть поиск q
-        - $ref: '#/components/parameters/DateFrom'   # ← новее
-        - $ref: '#/components/parameters/DateTo'     # ← новее
-        - $ref: '#/components/parameters/Order'      # ← новее
+        - $ref: '#/components/parameters/SourceId'
+        - $ref: '#/components/parameters/Q'   
+        - $ref: '#/components/parameters/DateFrom' 
+        - $ref: '#/components/parameters/DateTo'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/RubricId'
       responses:
         '200':
           description: Успешно
@@ -1032,6 +1033,14 @@ components:
         type: string
         enum: [asc, desc]
         default: desc
+    RubricId:
+      name: rubric_id
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+      description: |
+        Фильтрует статьи по rubric id из статистики статьи (ArticleStat.rubric_id).
     SettingsCodes:
       name: codes
       in: query

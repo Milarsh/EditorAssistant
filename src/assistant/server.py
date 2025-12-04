@@ -327,6 +327,14 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             date_to_raw = (query.get("date_to", [""])[0] or "").strip()
             order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
 
+            raw_rubric_id = (query.get("rubric_id", [""])[0] or "").strip()
+            rubric_id = None
+            if raw_rubric_id:
+                try:
+                    rubric_id = int(raw_rubric_id)
+                except Exception:
+                    raise ValidationError("Invalid fields", details={"rubric_id": "Must be integer"})
+
             def _parse_dt(val: str, end_of_day: bool = False):
                 if not val:
                     return None
@@ -353,7 +361,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 raise ValidationError("Invalid date range", details={"date_from": "must be <= date_to"})
 
             with SessionLocal() as session:
-                stmt = select(Article)
+                stmt = (
+                    select(Article)
+                    .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                )
 
                 if source_id:
                     stmt = stmt.where(Article.source_id == source_id)
@@ -366,6 +377,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     stmt = stmt.where(Article.published_at >= dt_from)
                 if dt_to:
                     stmt = stmt.where(Article.published_at <= dt_to)
+
+                if rubric_id is not None:
+                    stmt = stmt.where(ArticleStat.rubric_id == rubric_id)
 
                 total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
