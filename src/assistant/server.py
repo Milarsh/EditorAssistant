@@ -9,9 +9,19 @@ from collections import deque, defaultdict
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
+from src.db.models.stop_category import StopCategory
+from src.db.models.rubric import Rubric
+from src.db.models.stop_word import StopWord
+from src.db.models.key_word import KeyWord
+from src.db.models.article_stop_word import ArticleStopWord
+from src.db.models.article_key_word import ArticleKeyWord
+from src.db.models.article_stat import ArticleStat
 from src.db.models.settings import Settings
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
+
+from src.utils.slugifier import slugify_code
+from src.utils.analyzer import analyze_article_words
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -152,6 +162,29 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("POST", re.compile(r"^/api/tg/auth/qr$"), "tg_auth_start_qr"),
             ("POST", re.compile(r"^/api/tg/auth/2fa$"), "tg_auth_2fa"),
             ("POST", re.compile(r"^/api/tg/auth/logout$"), "tg_auth_logout"),
+
+            # категории стоп-слов и рубрики
+            ("GET",  re.compile(r"^/api/stop-categories$"),         "list_stop_categories"),
+            ("POST", re.compile(r"^/api/stop-categories$"),         "upsert_stop_category"),
+            ("DELETE", re.compile(r"^/api/stop-categories/(\d+)$"), "delete_stop_category"),
+            
+            ("GET",  re.compile(r"^/api/rubrics$"),                 "list_rubrics"),
+            ("POST", re.compile(r"^/api/rubrics$"),                 "upsert_rubric"),
+            ("DELETE", re.compile(r"^/api/rubrics/(\d+)$"),         "delete_rubric"),
+
+            # стоп-слова и ключевые слова
+            ("GET",  re.compile(r"^/api/stop-words$"),              "list_stop_words"),
+            ("POST", re.compile(r"^/api/stop-words$"),              "upsert_stop_word"),
+            ("DELETE", re.compile(r"^/api/stop-words/(\d+)$"),      "delete_stop_word"),
+
+            ("GET",  re.compile(r"^/api/key-words$"),               "list_key_words"),
+            ("POST", re.compile(r"^/api/key-words$"),               "upsert_key_word"),
+            ("DELETE", re.compile(r"^/api/key-words/(\d+)$"),       "delete_key_word"),
+
+            # статистика по статье
+            ("GET",  re.compile(r"^/api/articles/(\d+)/stats$"),        "get_article_stats"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/stop-words$"), "get_article_stop_words"),
+            ("GET", re.compile(r"^/api/articles/(\d+)/key-words$"), "get_article_key_words"),
         ]
 
         def do_GET(self): self._dispatch("GET")
@@ -294,6 +327,14 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             date_to_raw = (query.get("date_to", [""])[0] or "").strip()
             order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
 
+            raw_rubric_id = (query.get("rubric_id", [""])[0] or "").strip()
+            rubric_id = None
+            if raw_rubric_id:
+                try:
+                    rubric_id = int(raw_rubric_id)
+                except Exception:
+                    raise ValidationError("Invalid fields", details={"rubric_id": "Must be integer"})
+
             def _parse_dt(val: str, end_of_day: bool = False):
                 if not val:
                     return None
@@ -320,7 +361,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 raise ValidationError("Invalid date range", details={"date_from": "must be <= date_to"})
 
             with SessionLocal() as session:
-                stmt = select(Article)
+                stmt = (
+                    select(Article)
+                    .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                )
 
                 if source_id:
                     stmt = stmt.where(Article.source_id == source_id)
@@ -333,6 +377,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     stmt = stmt.where(Article.published_at >= dt_from)
                 if dt_to:
                     stmt = stmt.where(Article.published_at <= dt_to)
+
+                if rubric_id is not None:
+                    stmt = stmt.where(ArticleStat.rubric_id == rubric_id)
 
                 total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
@@ -682,6 +729,428 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def tg_auth_logout(self, match, query):
             data = logout_sync()
             self._json_ok(data)
+
+        # article word stats
+        def get_article_stats(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                try:
+                    stats = analyze_article_words(session, article_id)
+                except ValueError:
+                    raise NotFound("Article not found")
+
+                self._json_ok({
+                    "entity_id": stats.entity_id,
+                    "stop_words_count": stats.stop_words_count,
+                    "key_words_count": stats.key_words_count,
+                    "rubric_id": stats.rubric_id,
+                    "stop_category_id": stats.stop_category_id,
+                })
+
+        def get_article_stop_words(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
+                    raise NotFound("Article not found")
+
+                rows = session.execute(
+                    select(StopWord)
+                    .join(ArticleStopWord, ArticleStopWord.stop_word_id == StopWord.id)
+                    .where(ArticleStopWord.entity_id == article_id)
+                    .order_by(StopWord.id)
+                ).scalars().all()
+
+                self._json_ok({
+                    "id": article_id,
+                    "items": [
+                        {
+                            "id": w.id,
+                            "code": w.code,
+                            "value": w.value,
+                            "category_id": w.category_id,
+                        }
+                        for w in rows
+                    ],
+                })
+
+        def get_article_key_words(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                article = session.get(Article, article_id)
+                if not article:
+                    raise NotFound("Article not found")
+
+                rows = session.execute(
+                    select(KeyWord)
+                    .join(ArticleKeyWord, ArticleKeyWord.key_word_id == KeyWord.id)
+                    .where(ArticleKeyWord.entity_id == article_id)
+                    .order_by(KeyWord.id)
+                ).scalars().all()
+
+                self._json_ok({
+                    "id": article_id,
+                    "items": [
+                        {
+                            "id": w.id,
+                            "code": w.code,
+                            "value": w.value,
+                            "rubric_id": w.rubric_id,
+                        }
+                        for w in rows
+                    ],
+                })
+
+        # key words
+        def list_key_words(self, match, query):
+            with SessionLocal() as session:
+                rows = session.execute(
+                    select(KeyWord).order_by(KeyWord.id)
+                ).scalars().all()
+                self._json_ok([
+                    {
+                        "id": w.id,
+                        "code": w.code,
+                        "value": w.value,
+                        "rubric_id": w.rubric_id,
+                    }
+                    for w in rows
+                ])
+
+        def upsert_key_word(self, match, query):
+            body = parse_json_body(self) or {}
+            word_id = body.get("id")
+            value = (body.get("value") or "").strip()
+            raw_rubric_id = body.get("rubric_id")
+
+            errors = {}
+            if not value:
+                errors["value"] = "Required"
+            try:
+                rubric_id = int(raw_rubric_id) if raw_rubric_id is not None else 0
+            except Exception:
+                rubric_id = 0
+                errors["rubric_id"] = "Must be integer"
+            if rubric_id <= 0:
+                errors.setdefault("rubric_id", "Required")
+
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+
+            code = slugify_code(value)
+
+            with SessionLocal() as session:
+                rubric = session.get(Rubric, rubric_id)
+                if not rubric:
+                    raise ValidationError("Invalid fields", details={"rubric_id": "Rubric not found"})
+
+                existing = session.execute(
+                    select(KeyWord).where(KeyWord.code == code)
+                ).scalar_one_or_none()
+
+                if word_id is not None:
+                    try:
+                        word_id = int(word_id)
+                    except Exception:
+                        raise ValidationError("Invalid fields", details={"id": "Must be integer"})
+
+                    obj = session.get(KeyWord, word_id)
+                    if not obj:
+                        raise NotFound("Key word not found")
+
+                    if existing and existing.id != obj.id:
+                        raise Conflict(
+                            "Key word with same code already exists",
+                            details={"code": code}
+                        )
+
+                    obj.value = value
+                    obj.code = code
+                    obj.rubric_id = rubric_id
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({
+                        "id": obj.id,
+                        "code": obj.code,
+                        "value": obj.value,
+                        "rubric_id": obj.rubric_id,
+                    })
+                else:
+                    if existing:
+                        raise Conflict(
+                            "Key word with same code already exists",
+                            details={"code": code}
+                        )
+
+                    obj = KeyWord(value=value, code=code, rubric_id=rubric_id)
+                    session.add(obj)
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({
+                        "id": obj.id,
+                        "code": obj.code,
+                        "value": obj.value,
+                        "rubric_id": obj.rubric_id,
+                    }, status=201)
+
+        def delete_key_word(self, match, query):
+            word_id = int(match.group(1))
+            with SessionLocal() as session:
+                obj = session.get(KeyWord, word_id)
+                if not obj:
+                    raise NotFound("Key word not found")
+                session.delete(obj)
+                session.commit()
+                self._json_ok({"status": "deleted", "id": word_id})
+
+
+        # stop words
+        def list_stop_words(self, match, query):
+            with SessionLocal() as session:
+                rows = session.execute(
+                    select(StopWord).order_by(StopWord.id)
+                ).scalars().all()
+                self._json_ok([
+                    {
+                        "id": w.id,
+                        "code": w.code,
+                        "value": w.value,
+                        "category_id": w.category_id,
+                    }
+                    for w in rows
+                ])
+
+        def upsert_stop_word(self, match, query):
+            body = parse_json_body(self) or {}
+            word_id = body.get("id")
+            value = (body.get("value") or "").strip()
+            raw_category_id = body.get("category_id")
+
+            errors = {}
+            if not value:
+                errors["value"] = "Required"
+            try:
+                category_id = int(raw_category_id) if raw_category_id is not None else 0
+            except Exception:
+                category_id = 0
+                errors["category_id"] = "Must be integer"
+            if category_id <= 0:
+                errors.setdefault("category_id", "Required")
+
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+
+            code = slugify_code(value)
+
+            with SessionLocal() as session:
+                category = session.get(StopCategory, category_id)
+                if not category:
+                    raise ValidationError("Invalid fields", details={"category_id": "Category not found"})
+
+                existing = session.execute(
+                    select(StopWord).where(StopWord.code == code)
+                ).scalar_one_or_none()
+
+                if word_id is not None:
+                    try:
+                        word_id = int(word_id)
+                    except Exception:
+                        raise ValidationError("Invalid fields", details={"id": "Must be integer"})
+
+                    obj = session.get(StopWord, word_id)
+                    if not obj:
+                        raise NotFound("Stop word not found")
+
+                    if existing and existing.id != obj.id:
+                        raise Conflict(
+                            "Stop word with same code already exists",
+                            details={"code": code}
+                        )
+
+                    obj.value = value
+                    obj.code = code
+                    obj.category_id = category_id
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({
+                        "id": obj.id,
+                        "code": obj.code,
+                        "value": obj.value,
+                        "category_id": obj.category_id,
+                    })
+                else:
+                    if existing:
+                        raise Conflict(
+                            "Stop word with same code already exists",
+                            details={"code": code}
+                        )
+
+                    obj = StopWord(value=value, code=code, category_id=category_id)
+                    session.add(obj)
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({
+                        "id": obj.id,
+                        "code": obj.code,
+                        "value": obj.value,
+                        "category_id": obj.category_id,
+                    }, status=201)
+
+        def delete_stop_word(self, match, query):
+            word_id = int(match.group(1))
+            with SessionLocal() as session:
+                obj = session.get(StopWord, word_id)
+                if not obj:
+                    raise NotFound("Stop word not found")
+                session.delete(obj)
+                session.commit()
+                self._json_ok({"status": "deleted", "id": word_id})
+
+        # rubrics
+        def list_rubrics(self, match, query):
+            with SessionLocal() as session:
+                rows = session.execute(
+                    select(Rubric).order_by(Rubric.id)
+                ).scalars().all()
+                self._json_ok([
+                    {"id": r.id, "code": r.code, "title": r.title}
+                    for r in rows
+                ])
+
+        def upsert_rubric(self, match, query):
+            body = parse_json_body(self) or {}
+            rubric_id = body.get("id")
+            title = (body.get("title") or "").strip()
+
+            errors = {}
+            if not title:
+                errors["title"] = "Required"
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+
+            code = slugify_code(title)
+
+            with SessionLocal() as session:
+                existing = session.execute(
+                    select(Rubric).where(Rubric.code == code)
+                ).scalar_one_or_none()
+
+                if rubric_id is not None:
+                    try:
+                        rubric_id = int(rubric_id)
+                    except Exception:
+                        raise ValidationError("Invalid fields", details={"id": "Must be integer"})
+
+                    obj = session.get(Rubric, rubric_id)
+                    if not obj:
+                        raise NotFound("Rubric not found")
+
+                    if existing and existing.id != obj.id:
+                        raise Conflict(
+                            "Rubric with same code already exists",
+                            details={"code": code}
+                        )
+
+                    obj.title = title
+                    obj.code = code
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({"id": obj.id, "code": obj.code, "title": obj.title})
+                else:
+                    if existing:
+                        raise Conflict(
+                            "Rubric with same code already exists",
+                            details={"code": code}
+                        )
+                    obj = Rubric(title=title, code=code)
+                    session.add(obj)
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({"id": obj.id, "code": obj.code, "title": obj.title}, status=201)
+
+        def delete_rubric(self, match, query):
+            rubric_id = int(match.group(1))
+            with SessionLocal() as session:
+                obj = session.get(Rubric, rubric_id)
+                if not obj:
+                    raise NotFound("Rubric not found")
+                session.delete(obj)
+                session.commit()
+                self._json_ok({"status": "deleted", "id": rubric_id})
+
+        # stop categories
+        def list_stop_categories(self, match, query):
+            with SessionLocal() as session:
+                rows = session.execute(
+                    select(StopCategory)
+                    .where(StopCategory.is_active.is_(True))
+                    .order_by(StopCategory.id)
+                ).scalars().all()
+                self._json_ok([
+                    {"id": r.id, "code": r.code, "title": r.title}
+                    for r in rows
+                ])
+
+        def upsert_stop_category(self, match, query):
+            body = parse_json_body(self) or {}
+            cat_id = body.get("id")
+            title = (body.get("title") or "").strip()
+
+            errors = {}
+            if not title:
+                errors["title"] = "Required"
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+
+            code = slugify_code(title)
+
+            with SessionLocal() as session:
+                existing = session.execute(
+                    select(StopCategory).where(StopCategory.code == code)
+                ).scalar_one_or_none()
+
+                if cat_id is not None:
+                    try:
+                        cat_id = int(cat_id)
+                    except Exception:
+                        raise ValidationError("Invalid fields", details={"id": "Must be integer"})
+
+                    obj = session.get(StopCategory, cat_id)
+                    if not obj:
+                        raise NotFound("Stop category not found")
+
+                    if existing and existing.id != obj.id:
+                        raise Conflict(
+                            "Stop category with same code already exists",
+                            details={"code": code}
+                        )
+
+                    obj.title = title
+                    obj.code = code
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({"id": obj.id, "code": obj.code, "title": obj.title})
+                else:
+                    if existing:
+                        raise Conflict(
+                            "Stop category with same code already exists",
+                            details={"code": code}
+                        )
+                    obj = StopCategory(title=title, code=code)
+                    session.add(obj)
+                    session.commit()
+                    session.refresh(obj)
+                    self._json_ok({"id": obj.id, "code": obj.code, "title": obj.title}, status=201)
+
+        def delete_stop_category(self, match, query):
+            cat_id = int(match.group(1))
+            with SessionLocal() as session:
+                obj = session.get(StopCategory, cat_id)
+                if not obj:
+                    raise NotFound("Stop category not found")
+                session.delete(obj)
+                session.commit()
+                self._json_ok({"status": "deleted", "id": cat_id})
 
         # ---- заглушка ----
         def not_impl(self, match, query):
