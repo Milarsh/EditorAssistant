@@ -255,7 +255,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             self._send(status, json_bytes(payload), "application/json; charset=utf-8")
 
         def log_message(self, fmt, *args):
-            print(f"[{self.command}] {self.path} - {self.address_string()}")
+            method = getattr(self, "command", "-")
+            path = getattr(self, "path", "<no-path>")
+            print(f"[{method}] {path} - {self.address_string()}")
 
         # ---- Handlers ----
         def healthz(self, match, query):
