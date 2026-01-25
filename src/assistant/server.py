@@ -116,9 +116,13 @@ class ParserError(ApiError):
     status: int = 502
     code: str = "parser_error"
 
+
+READ_TIMEOUT_SEC = int(os.getenv("READ_TIMEOUT_SEC", "15"))
+
 # -------- Rate Limiting --------
 RATE_LIMIT = int(os.getenv("RATE_LIMIT", "60"))         # запросов
 RATE_WINDOW = int(os.getenv("RATE_WINDOW", "60"))       # секунд
+
 # очередь временных меток на каждый key (ip)
 _rate_buckets = defaultdict(lambda: deque())
 
@@ -191,6 +195,13 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def do_POST(self): self._dispatch("POST")
         def do_DELETE(self): self._dispatch("DELETE")
 
+        def setup(self):
+            super().setup()
+            try:
+                self.connection.settimeout(READ_TIMEOUT_SEC)
+            except Exception:
+                pass
+
         def _dispatch(self, method: str):
             ip = self.address_string()
             try:
@@ -243,6 +254,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Access-Control-Max-Age", "86400")
             self.end_headers()
+
+        def handle_one_request(self):
+            try:
+                return super().handle_one_request()
+            except (ConnectionResetError, BrokenPipeError):
+                return
 
         def _json_ok(self, payload, status=200):
             self._send(status, json_bytes(payload), "application/json; charset=utf-8")
