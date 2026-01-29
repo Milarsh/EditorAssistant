@@ -17,7 +17,7 @@ from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
 from src.db.models.settings import Settings
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.exc import IntegrityError
 
 from src.utils.slugifier import slugify_code
@@ -1090,6 +1090,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def delete_rubric(self, match, query):
             rubric_id = int(match.group(1))
             with SessionLocal() as session:
+                key_word_ids = session.execute(
+                    select(KeyWord.id).where(KeyWord.rubric_id == rubric_id)
+                ).scalars().all()
+
+                if key_word_ids:
+                    session.execute(
+                        delete(ArticleKeyWord).where(ArticleKeyWord.key_word_id.in_(key_word_ids))
+                    )
+                    session.execute(
+                        delete(KeyWord).where(KeyWord.id.in_(key_word_ids))
+                    )
+
+                session.execute(
+                    ArticleStat.__table__.update()
+                    .where(ArticleStat.rubric_id == rubric_id)
+                    .values(rubric_id=None)
+                )
                 obj = session.get(Rubric, rubric_id)
                 if not obj:
                     raise NotFound("Rubric not found")
@@ -1164,6 +1181,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def delete_stop_category(self, match, query):
             cat_id = int(match.group(1))
             with SessionLocal() as session:
+                stop_word_ids = session.execute(
+                    select(StopWord.id).where(StopWord.category_id == cat_id)
+                ).scalars().all()
+
+                if stop_word_ids:
+                    session.execute(
+                        delete(ArticleStopWord).where(ArticleStopWord.stop_word_id.in_(stop_word_ids))
+                    )
+                    session.execute(
+                        delete(StopWord).where(StopWord.id.in_(stop_word_ids))
+                    )
+
+                session.execute(
+                    ArticleStat.__table__.update()
+                    .where(ArticleStat.stop_category_id == cat_id)
+                    .values(stop_category_id=None)
+                )
                 obj = session.get(StopCategory, cat_id)
                 if not obj:
                     raise NotFound("Stop category not found")
