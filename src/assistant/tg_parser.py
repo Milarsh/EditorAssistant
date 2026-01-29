@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
+from src.utils.settings import get_setting_bool, get_setting_int
 
 from pathlib import Path
 import json
@@ -91,7 +92,12 @@ def _save_manifest(dir_path: Path, entries: list[dict]):
     except Exception:
         pass
 
-async def download_tg_media_for_message(client: TelegramClient, msg: Message, channel: str) -> list[str]:
+async def download_tg_media_for_message(
+    client: TelegramClient,
+    msg: Message,
+    channel: str,
+    max_bytes: int | None,
+) -> list[str]:
     dest_dir = Path(MEDIA_DIR) / "tg" / channel / str(msg.id)
     _ensure_dir(dest_dir)
 
@@ -100,9 +106,18 @@ async def download_tg_media_for_message(client: TelegramClient, msg: Message, ch
 
     try:
         if msg.media:
+            msg_size = None
+            try:
+                msg_size = getattr(getattr(msg, "file", None), "size", None)
+            except Exception:
+                msg_size = None
+
+            if max_bytes and max_bytes > 0 and msg_size and msg_size > max_bytes:
+                return []
+
             try:
                 await client.download_media(msg, file=str(dest_dir))
-            except Exception as exception:
+            except Exception:
                 pass
     except Exception:
         pass
@@ -111,6 +126,12 @@ async def download_tg_media_for_message(client: TelegramClient, msg: Message, ch
         if not path.is_file():
             continue
         if path.name == "media.json":
+            continue
+        if max_bytes and max_bytes > 0 and path.stat().st_size > max_bytes:
+            try:
+                path.unlink()
+            except Exception:
+                pass
             continue
         rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
         rel_urls.append(f"/media/{rel}")
@@ -125,6 +146,9 @@ async def download_tg_media_for_message(client: TelegramClient, msg: Message, ch
 
 
 async def _process_tg_source(client: TelegramClient, source: Source, logger) -> int:
+    media_keep = get_setting_bool("media_keep", True)
+    max_mb = get_setting_int("media_max_size_mb", 50)
+    max_bytes = None if max_mb <= 0 else int(max_mb) * 1024 * 1024
     channel = _channel_from_url(source.rss_url or "")
     if not channel:
         logger.write(f"[ERROR] TG invalid URL: {source.rss_url}")
@@ -245,10 +269,11 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
                 added += 1
                 logger.write(f"[ADD] TG Source={source.name!r} Title={title!r}")
 
-                try:
-                    await download_tg_media_for_message(client, msg, channel)
-                except Exception as exception:
-                    logger.write(f"[WARN] TG media download failed for {channel}/{msg.id}: {exception}")
+                if media_keep:
+                    try:
+                        await download_tg_media_for_message(client, msg, channel, max_bytes)
+                    except Exception as exception:
+                        logger.write(f"[WARN] TG media download failed for {channel}/{msg.id}: {exception}")
 
     except FloodWaitError as error:
         wait_s = int(getattr(error, "seconds", TG_SLEEP_ON_FLOOD) or TG_SLEEP_ON_FLOOD)

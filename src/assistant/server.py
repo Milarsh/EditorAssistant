@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.utils.slugifier import slugify_code
 from src.utils.analyzer import analyze_article_words
+from src.utils.settings import get_setting_options as get_setting_options_meta, get_all_setting_codes, validate_setting_value
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -159,6 +160,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             # settings
             ("GET", re.compile(r"^/api/settings$"), "list_settings"), # ave
             ("POST", re.compile(r"^/api/settings$"), "update_settings"), # ave
+            ("GET", re.compile(r"^/api/settings/codes$"), "list_setting_codes"),
+            ("GET", re.compile(r"^/api/settings/options$"), "get_setting_options"),
             # media (local)
             ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
             # telegram auth
@@ -625,19 +628,21 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 errors["value"] = "Required"
             if errors:
                 raise ValidationError("Invalid fields", details=errors)
+
+            normalized_value, err = validate_setting_value(code, value)
+            if err:
+                raise ValidationError("Invalid fields", details=err)
             
             with SessionLocal() as session:
                 stmt = session.execute(
                     select(Settings).where(Settings.code == code)
                 ).scalar_one_or_none()
 
-                if stmt:
-                    stmt.value = str(value)
-                    status = 200
-                else:
-                    stmt = Settings(code=code, value=value)
-                    session.add(stmt)
-                    status = 201
+                if not stmt:
+                    raise NotFound("Setting code not found")
+
+                stmt.value = normalized_value
+                status = 200
                 
                 session.commit()
                 session.refresh(stmt)
@@ -649,6 +654,24 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 }
 
                 self._json_ok(res, status=status)
+
+        def list_setting_codes(self, match, query):
+            self._json_ok({"codes": get_all_setting_codes()})
+
+        def get_setting_options(self, match, query):
+            code = (query.get("code", [""])[0] or "").strip()
+            if code:
+                options = get_setting_options_meta(code)
+                if not options:
+                    raise NotFound("Setting code not found")
+                return self._json_ok(options)
+
+            items = []
+            for c in get_all_setting_codes():
+                opt = get_setting_options_meta(c)
+                if opt:
+                    items.append(opt)
+            self._json_ok({"items": items})
 
         # Media (Local)
         def serve_media(self, match, query):

@@ -63,10 +63,10 @@ def run_cycle():
 def main():
     logger.ensure_log_dir()
     logger.write("[PARSER] Parser started")
-    interval = get_setting_int("poll_interval", 300)
+    interval_minutes = get_setting_int("poll_interval", 5)
     while True:
         run_cycle()
-        time.sleep(interval)
+        time.sleep(interval_minutes * 60)
 
 if __name__ == "__main__":
     main()

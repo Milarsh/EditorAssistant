@@ -568,7 +568,10 @@ paths:
     get:
       tags:
         - Settings
-      summary: Список настроек
+      summary: Список текущих значений настроек
+      description: |
+        Возвращает значения динамических общих настроек сервиса.
+        Если `codes` не указан — возвращаются все известные коды.
       parameters:
         - $ref: '#/components/parameters/SettingsCodes'
       responses:
@@ -582,11 +585,11 @@ paths:
                 ok:
                   value:
                     - id: 1
-                      code: tg.enabled
-                      value: "1"
+                      code: poll_interval
+                      value: "5"
                     - id: 2
-                      code: parser.interval
-                      value: "60"
+                      code: media_keep
+                      value: "true"
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -594,7 +597,10 @@ paths:
     post:
       tags:
         - Settings
-      summary: Создать или обновить настройку
+      summary: Обновить значение настройки
+      description: |
+        Обновляет значение существующей настройки по `code`.
+        Создание новых настроек через этот роут запрещено.
       requestBody:
         required: true
         content:
@@ -604,8 +610,8 @@ paths:
             examples:
               sample:
                 value:
-                  code: tg.enabled
-                  value: "1"
+                  code: poll_interval
+                  value: 10
       responses:
         '200':
           description: Обновлено
@@ -613,14 +619,85 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Setting'
-        '201':
-          description: Создано
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/codes:
+    get:
+      tags:
+        - Settings
+      summary: Список актуальных кодов настроек
+      responses:
+        '200':
+          description: Успешно
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Setting'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: '#/components/schemas/SettingCodesResponse'
+              examples:
+                ok:
+                  value:
+                    codes:
+                      - poll_interval
+                      - media_keep
+                      - media_max_size_mb
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/options:
+    get:
+      tags:
+        - Settings
+      summary: Варианты выбора для настроек
+      description: |
+        Если передан `code`, возвращает метаданные одной настройки.
+        Если `code` не указан, возвращает список по всем актуальным кодам.
+      parameters:
+        - $ref: '#/components/parameters/SettingCode'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SettingOptions'
+                  - $ref: '#/components/schemas/SettingOptionsList'
+              examples:
+                single:
+                  value:
+                    code: poll_interval
+                    type: int
+                    default: 5
+                    options: [5, 10, 15, 30, 45, 60]
+                    allow_custom: true
+                    min: 1
+                    max: 60
+                list:
+                  value:
+                    items:
+                      - code: media_keep
+                        type: bool
+                        default: true
+                        options: [true, false]
+                      - code: media_max_size_mb
+                        type: int
+                        default: 50
+                        options: [5, 10, 25, 50, 100, 0]
+                        allow_custom: true
+                        min: 1
+                        max: 2048
+                        zero_is_unlimited: true
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -1005,9 +1082,7 @@ components:
         date:
           value: "2025-10-28"
         datetime_z:
-          value: "2025-10-28T08:00:00Z"
-        datetime_offset:
-          value: "2025-10-28T11:00:00+03:00"
+          value: "2025-10-28T14:00:00Z"
     DateTo:
       name: date_to
       in: query
@@ -1050,7 +1125,15 @@ components:
         возвращаются все настройки.
       schema:
         type: string
-        example: "tg.enabled,parser.interval"
+        example: "poll_interval,media_keep"
+    SettingCode:
+      name: code
+      in: query
+      required: false
+      description: Код настройки для получения вариантов выбора.
+      schema:
+        type: string
+        example: poll_interval
   schemas:
     Error:
       type: object
@@ -1479,6 +1562,55 @@ components:
         value:
           type: string
           example: "1"
+
+
+    SettingCodesResponse:
+      type: object
+      required: [ codes ]
+      properties:
+        codes:
+          type: array
+          items:
+            type: string
+
+    SettingOptions:
+      type: object
+      required: [ code, type, default ]
+      properties:
+        code:
+          type: string
+        type:
+          type: string
+          enum: [ int, bool, string ]
+        default:
+          oneOf:
+            - type: integer
+            - type: boolean
+            - type: string
+        options:
+          type: array
+          items:
+            oneOf:
+              - type: integer
+              - type: boolean
+              - type: string
+        allow_custom:
+          type: boolean
+        min:
+          type: integer
+        max:
+          type: integer
+        zero_is_unlimited:
+          type: boolean
+
+    SettingOptionsList:
+      type: object
+      required: [ items ]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettingOptions'
 
     ArticleStopWordsResponse:
       type: object
