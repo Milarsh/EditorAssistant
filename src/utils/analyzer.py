@@ -100,14 +100,12 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
     key_texts = [w.value for w in key_words if w.value and w.value.strip()]
 
     key_counts_by_id = {}
-    key_total = 0
     rubric_counts = defaultdict(int)
 
     for idx, key_word in enumerate(key_words):
             rel, _ = Relevance(full_text, key_word) # in [0;1]
             if rel > 0.3:
                 key_counts_by_id[key_word.id] = rel
-                key_total += 1
                 rubric_counts[key_word.rubric_id] += 1
     # - ave
     
