@@ -10,6 +10,7 @@ from src.db.models.key_word import KeyWord
 from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
+from src.utils.relevance import Relevance
 
 _morph = pymorphy3.MorphAnalyzer()
 
@@ -92,13 +93,22 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         stop_items, full_text
     )
 
+    # ave -
     key_words = session.execute(select(KeyWord)).scalars().all()
     key_items = [(w.id, w.value, w.rubric_id) for w in key_words]
 
-    key_counts_by_id, key_total, rubric_counts = count_words_for_items(
-        key_items, full_text
-    )
+    key_texts = [w.value for w in key_words if w.value and w.value.strip()]
 
+    key_counts_by_id = {}
+    rubric_counts = defaultdict(int)
+
+    for idx, key_word in enumerate(key_words):
+            rel, _ = Relevance(full_text, key_word) # in [0;1]
+            if rel > 0.3:
+                key_counts_by_id[key_word.id] = rel
+                rubric_counts[key_word.rubric_id] += 1
+    # - ave
+    
     session.execute(
         delete(ArticleStopWord).where(ArticleStopWord.entity_id == article.id)
     )
@@ -136,7 +146,7 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         session.add(stats)
 
     stats.stop_words_count = int(stop_total)
-    stats.key_words_count = int(key_total)
+    stats.key_words_count = int(key_counts_by_id)
     stats.rubric_id = rubric_id
     stats.stop_category_id = stop_category_id
 

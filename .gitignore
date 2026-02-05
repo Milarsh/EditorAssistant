@@ -6,3 +6,5 @@ __pycache__/
 log/
 media/
 secrets/
+.ipynb_checkpoints/
+*.ipynb
