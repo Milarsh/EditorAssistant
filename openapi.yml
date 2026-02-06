@@ -200,6 +200,43 @@ paths:
                 $ref: '#/components/schemas/ArticleAssetsResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/articles/cleanup:
+    post:
+      tags:
+        - Articles
+      summary: Очистка новостей до даты
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArticleCleanupRequest'
+            examples:
+              sample:
+                value:
+                  date_to: '2025-12-31'
+                  dry_run: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleCleanupResponse'
+              examples:
+                sample:
+                  value:
+                    date_to: '2025-12-31T23:59:59Z'
+                    dry_run: true
+                    total: 1247
+                    deleted: 893
+                    remaining: 354
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/articles/{id}/children:
     get:
       tags:
@@ -1635,6 +1672,35 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/KeyWord'
+
+    ArticleCleanupRequest:
+      type: object
+      required: [ date_to ]
+      properties:
+        date_to:
+          type: string
+          description: Дата (RFC3339 или YYYY-MM-DD). Удаляются новости до даты включительно.
+        dry_run:
+          type: boolean
+          default: false
+          description: Если true, удаление не выполняется, возвращается только статистика.
+
+    ArticleCleanupResponse:
+      type: object
+      required: [ date_to, dry_run, total, deleted, remaining ]
+      properties:
+        date_to:
+          type: string
+          format: date-time
+          description: Нормализованная дата отсечения.
+        dry_run:
+          type: boolean
+        total:
+          type: integer
+        deleted:
+          type: integer
+        remaining:
+          type: integer
 
 
     StopCategory:

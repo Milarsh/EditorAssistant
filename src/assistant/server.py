@@ -17,7 +17,7 @@ from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
 from src.db.models.settings import Settings
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, and_, or_
 from sqlalchemy.exc import IntegrityError
 
 from src.utils.slugifier import slugify_code
@@ -157,6 +157,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
             ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
             ("GET", re.compile(r"^/api/articles/(\d+)/parent$"), "get_article_parent"),
+            ("POST", re.compile(r"^/api/articles/cleanup$"), "cleanup_articles"),
             # settings
             ("GET", re.compile(r"^/api/settings$"), "list_settings"), # ave
             ("POST", re.compile(r"^/api/settings$"), "update_settings"), # ave
@@ -449,6 +450,76 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "published_at": article.published_at,
                     "fetched_at": article.fetched_at,
                     "parent_article_id": article.parent_article_id
+                })
+
+        def cleanup_articles(self, match, query):
+            body = parse_json_body(self) or {}
+            date_raw = (body.get("date_to") or body.get("date") or "").strip()
+            dry_run = bool(body.get("dry_run", False))
+
+            errors = {}
+            if not date_raw:
+                errors["date_to"] = "Required"
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+
+            def _parse_dt(val: str):
+                if not val:
+                    return None
+                if len(val) == 10 and val[4] == "-" and val[7] == "-":
+                    y, m, d = map(int, val.split("-"))
+                    base = datetime(y, m, d, tzinfo=timezone.utc)
+                    return base + timedelta(days=1) - timedelta(microseconds=1)
+                val = val.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(val)
+                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+            try:
+                dt_to = _parse_dt(date_raw)
+            except Exception:
+                raise ValidationError("Invalid date format", details={
+                    "date_to": "Use RFC3339 or YYYY-MM-DD" if date_raw else None,
+                })
+
+            if not dt_to:
+                raise ValidationError("Invalid fields", details={"date_to": "Required"})
+
+            with SessionLocal() as session:
+                total = session.scalar(select(func.count()).select_from(Article)) or 0
+
+                date_filter = or_(
+                    Article.published_at <= dt_to,
+                    and_(Article.published_at.is_(None), Article.fetched_at <= dt_to),
+                )
+
+                to_delete = session.scalar(
+                    select(func.count()).select_from(Article).where(date_filter)
+                ) or 0
+
+                remaining = max(0, total - to_delete)
+
+                if not dry_run and to_delete:
+                    id_subq = select(Article.id).where(date_filter)
+                    session.execute(
+                        delete(ArticleKeyWord).where(ArticleKeyWord.entity_id.in_(id_subq))
+                    )
+                    session.execute(
+                        delete(ArticleStopWord).where(ArticleStopWord.entity_id.in_(id_subq))
+                    )
+                    session.execute(
+                        delete(ArticleStat).where(ArticleStat.entity_id.in_(id_subq))
+                    )
+                    session.execute(
+                        delete(Article).where(Article.id.in_(id_subq))
+                    )
+                    session.commit()
+
+                self._json_ok({
+                    "date_to": dt_to,
+                    "dry_run": dry_run,
+                    "total": total,
+                    "deleted": to_delete,
+                    "remaining": remaining,
                 })
 
         def get_article_media(self, match, query):
