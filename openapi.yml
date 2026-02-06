@@ -159,6 +159,19 @@ paths:
                         published_at: "2025-10-28T10:05:51Z"
                         fetched_at: "2025-10-28T10:06:10Z"
                         parent_article_id: 101
+  /api/articles/export:
+    get:
+      tags:
+        - Articles
+      summary: Экспорт статистики статей в Excel
+      responses:
+        '200':
+          description: Экспорт сформирован, файл Excel
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
   /api/articles/{id}:
     get:
       tags:

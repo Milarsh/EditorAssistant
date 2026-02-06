@@ -1,9 +1,10 @@
 import os
+import io
 import json
 import re
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from collections import deque, defaultdict
 
 from src.db.db import SessionLocal
@@ -153,6 +154,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("DELETE", re.compile(r"^/api/sources/(\d+)$"),   "delete_source"),
             # articles
             ("GET",  re.compile(r"^/api/articles$"),          "list_articles"),
+            ("GET",  re.compile(r"^/api/articles/export$"),   "export_articles"),
             ("GET",  re.compile(r"^/api/articles/(\d+)$"),    "get_article"),
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
             ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
@@ -452,6 +454,119 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "parent_article_id": article.parent_article_id
                 })
 
+        def export_articles(self, match, query):
+            from openpyxl import Workbook
+
+            def _format_dt(value: datetime | None) -> str:
+                if not value:
+                    return ""
+                dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+                stamp = dt.isoformat(timespec="seconds")
+                return stamp[:-6] + "Z" if stamp.endswith("+00:00") else stamp
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H-%M-%S")
+            excel_name = f"statistics {timestamp}.xlsx"
+
+            with SessionLocal() as session:
+                rows = session.execute(
+                    select(Article, Source.rss_url, ArticleStat, Rubric.title)
+                    .join(Source, Source.id == Article.source_id)
+                    .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                    .outerjoin(Rubric, Rubric.id == ArticleStat.rubric_id)
+                    .order_by(Article.id.asc())
+                ).all()
+
+                stop_rows = session.execute(
+                    select(ArticleStopWord.entity_id, StopWord.value)
+                    .join(StopWord, StopWord.id == ArticleStopWord.stop_word_id)
+                    .order_by(ArticleStopWord.entity_id.asc(), StopWord.id.asc())
+                ).all()
+
+                key_rows = session.execute(
+                    select(ArticleKeyWord.entity_id, KeyWord.value)
+                    .join(KeyWord, KeyWord.id == ArticleKeyWord.key_word_id)
+                    .order_by(ArticleKeyWord.entity_id.asc(), KeyWord.id.asc())
+                ).all()
+
+            stop_map: dict[int, list[str]] = defaultdict(list)
+            for entity_id, value in stop_rows:
+                if value:
+                    stop_map[int(entity_id)].append(value)
+
+            key_map: dict[int, list[str]] = defaultdict(list)
+            for entity_id, value in key_rows:
+                if value:
+                    key_map[int(entity_id)].append(value)
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "statistics"
+            sheet.append([
+                "id",
+                "Заголовок",
+                "Ссылка на новость",
+                "Ссылка на источник",
+                "Рубрика",
+                "Просмотры",
+                "Стоп-слова",
+                "Список стоп-слов",
+                "Ключевые слова",
+                "Список ключевых слов",
+                "Дата публикации",
+                "Дата добавления в систему",
+            ])
+
+            placeholder = "Нет данных"
+            total = 0
+
+            for article, source_url, stats, rubric_title in rows:
+                total += 1
+
+                stop_list = stop_map.get(article.id, [])
+                key_list = key_map.get(article.id, [])
+
+                stop_count = placeholder if not stats else stats.stop_words_count
+                key_count = placeholder if not stats else stats.key_words_count
+                rubric_value = rubric_title or placeholder
+                viewings_value = placeholder
+
+                sheet.append([
+                    article.id,
+                    article.title or "",
+                    article.link or "",
+                    source_url or "",
+                    rubric_value,
+                    viewings_value,
+                    stop_count,
+                    ", ".join(stop_list) if stop_list else placeholder,
+                    key_count,
+                    ", ".join(key_list) if key_list else placeholder,
+                    _format_dt(article.published_at) or placeholder,
+                    _format_dt(article.fetched_at) or placeholder,
+                ])
+
+            buffer = io.BytesIO()
+            workbook.save(buffer)
+            data = buffer.getvalue()
+
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            self.send_header("Content-Disposition", f'attachment; filename="{excel_name}"')
+            self.send_header("Content-Length", str(len(data)))
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin if origin != "null" else "*")
+                self.send_header("Vary", "Origin")
+            else:
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+            self.end_headers()
+            self.wfile.write(data)
+            
         def cleanup_articles(self, match, query):
             body = parse_json_body(self) or {}
             date_raw = (body.get("date_to") or body.get("date") or "").strip()
