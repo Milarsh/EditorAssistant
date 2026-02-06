@@ -5,3 +5,4 @@ httpx==0.27.*
 telethon==1.41.*
 bcrypt==5.*
 pymorphy3==2.*
+openpyxl==3.*
