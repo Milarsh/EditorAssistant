@@ -25,6 +25,14 @@ SETTINGS_SCHEMA = {
         "max": 2048,
         "zero_is_unlimited": True,
     },
+    "social_stats_interval": {
+        "type": "int",
+        "default": 60,
+        "options": [10, 15, 30, 60, 120, 240],
+        "allow_custom": True,
+        "min": 5,
+        "max": 1440,
+    },
 }
 
 BASE_SETTINGS = {code: str(meta.get("default")) for code, meta in SETTINGS_SCHEMA.items()}

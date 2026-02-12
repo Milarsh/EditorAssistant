@@ -1028,6 +1028,23 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/InternalError' }
 
+  /api/articles/{id}/social-stats:
+    get:
+      tags: [ Articles ]
+      summary: Социальная статистика для статьи
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArticleSocialStatsResponse'
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
   /api/articles/{id}/stop-words:
     get:
       tags:
@@ -1877,6 +1894,54 @@ components:
           type: integer
           nullable: true
           description: Категория с наибольшим количеством стоп-слов
+
+    ArticleSocialStat:
+      type: object
+      required: [ like_count, repost_count, comment_count, view_count, collected_at ]
+      properties:
+        like_count:
+          type: integer
+          minimum: 0
+          description: Количество лайков или реакций
+        repost_count:
+          type: integer
+          minimum: 0
+          description: Количество репостов или пересылок
+        comment_count:
+          type: integer
+          minimum: 0
+          description: Количество комментариев
+        view_count:
+          type: integer
+          minimum: 0
+          description: Количество просмотров
+        collected_at:
+          type: string
+          format: date-time
+          description: Время сбора статистики (UTC)
+
+    ArticleSocialStatsResponse:
+      type: object
+      required: [ id, has_social_stats, source_type ]
+      properties:
+        id:
+          type: integer
+          description: ID новости (статьи)
+        has_social_stats:
+          type: boolean
+          description: Доступна ли социальная статистика
+        source_type:
+          type: string
+          enum: [ rss, tg, vk ]
+          description: Тип источника
+        reason:
+          type: string
+          nullable: true
+          description: Причина отсутствия статистики
+        stats:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ArticleSocialStat'
 
 
   responses:

@@ -17,6 +17,7 @@ from src.db.models.key_word import KeyWord
 from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
+from src.db.models.article_social_stat import ArticleSocialStat
 from src.db.models.settings import Settings
 from sqlalchemy import select, func, delete, and_, or_
 from sqlalchemy.exc import IntegrityError
@@ -159,6 +160,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
             ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
             ("GET", re.compile(r"^/api/articles/(\d+)/parent$"), "get_article_parent"),
+            ("GET",  re.compile(r"^/api/articles/(\d+)/social-stats$"), "get_article_social_stats"),
             ("POST", re.compile(r"^/api/articles/cleanup$"), "cleanup_articles"),
             # settings
             ("GET", re.compile(r"^/api/settings$"), "list_settings"), # ave
@@ -469,10 +471,11 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
             with SessionLocal() as session:
                 rows = session.execute(
-                    select(Article, Source.rss_url, ArticleStat, Rubric.title)
+                    select(Article, Source.rss_url, ArticleStat, Rubric.title, ArticleSocialStat)
                     .join(Source, Source.id == Article.source_id)
                     .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
                     .outerjoin(Rubric, Rubric.id == ArticleStat.rubric_id)
+                    .outerjoin(ArticleSocialStat, ArticleSocialStat.entity_id == Article.id)
                     .order_by(Article.id.asc())
                 ).all()
 
@@ -519,7 +522,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             placeholder = "Нет данных"
             total = 0
 
-            for article, source_url, stats, rubric_title in rows:
+            for article, source_url, stats, rubric_title, social_stats in rows:
                 total += 1
 
                 stop_list = stop_map.get(article.id, [])
@@ -528,7 +531,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 stop_count = placeholder if not stats else stats.stop_words_count
                 key_count = placeholder if not stats else stats.key_words_count
                 rubric_value = rubric_title or placeholder
-                viewings_value = placeholder
+                viewings_value = placeholder if not social_stats else social_stats.view_count
 
                 sheet.append([
                     article.id,
@@ -973,6 +976,59 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "key_words_count": stats.key_words_count,
                     "rubric_id": stats.rubric_id,
                     "stop_category_id": stats.stop_category_id,
+                })
+
+        def get_article_social_stats(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                row = session.execute(
+                    select(Article, Source)
+                    .join(Source, Source.id == Article.source_id)
+                    .where(Article.id == article_id)
+                ).first()
+                if not row:
+                    raise NotFound("Article not found")
+
+                article, source = row
+                if source.type not in ("vk", "tg"):
+                    self._json_ok({
+                        "id": article_id,
+                        "has_social_stats": False,
+                        "source_type": source.type,
+                        "reason": "not_social_source",
+                    })
+                    return
+
+                if source.type == "tg" and article.parent_article_id is not None:
+                    self._json_ok({
+                        "id": article_id,
+                        "has_social_stats": False,
+                        "source_type": source.type,
+                        "reason": "child_post",
+                    })
+                    return
+
+                stats = session.get(ArticleSocialStat, article_id)
+                if not stats:
+                    self._json_ok({
+                        "id": article_id,
+                        "has_social_stats": True,
+                        "source_type": source.type,
+                        "stats": None,
+                    })
+                    return
+
+                self._json_ok({
+                    "id": article_id,
+                    "has_social_stats": True,
+                    "source_type": source.type,
+                    "stats": {
+                        "like_count": stats.like_count,
+                        "repost_count": stats.repost_count,
+                        "comment_count": stats.comment_count,
+                        "view_count": stats.view_count,
+                        "collected_at": stats.collected_at,
+                    },
                 })
 
         def get_article_stop_words(self, match, query):
