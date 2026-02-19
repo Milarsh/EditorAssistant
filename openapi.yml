@@ -1916,7 +1916,7 @@ components:
 
     ArticleSocialStat:
       type: object
-      required: [ like_count, repost_count, comment_count, view_count, collected_at ]
+      required: [ like_count, repost_count, comment_count, view_count, engagement_score, is_trending, collected_at ]
       properties:
         like_count:
           type: integer
@@ -1934,6 +1934,23 @@ components:
           type: integer
           minimum: 0
           description: Количество просмотров
+        engagement_score:
+          type: number
+          format: float
+          description: Метрика вовлеченности E
+        previous_engagement:
+          type: number
+          format: float
+          nullable: true
+          description: Предыдущее значение вовлеченности (24 часа назад)
+        engagement_delta:
+          type: number
+          format: float
+          nullable: true
+          description: Относительное изменение вовлеченности
+        is_trending:
+          type: boolean
+          description: Признак трендовой новости
         collected_at:
           type: string
           format: date-time

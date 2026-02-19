@@ -1056,6 +1056,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "repost_count": stats.repost_count,
                         "comment_count": stats.comment_count,
                         "view_count": stats.view_count,
+                        "engagement_score": stats.engagement_score,
+                        "previous_engagement": stats.previous_engagement,
+                        "engagement_delta": stats.engagement_delta,
+                        "is_trending": stats.is_trending,
                         "collected_at": stats.collected_at,
                     },
                 })
