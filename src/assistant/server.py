@@ -353,6 +353,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             date_from_raw = (query.get("date_from", [""])[0] or "").strip()
             date_to_raw = (query.get("date_to", [""])[0] or "").strip()
             order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
+            trend = (query.get("trend", ["all"])[0] or "all").strip().lower()
+            relevance_raw = (query.get("relevance", [""])[0] or "").strip().lower()
 
             raw_rubric_id = (query.get("rubric_id", [""])[0] or "").strip()
             rubric_id = None
@@ -387,10 +389,22 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             if dt_from and dt_to and dt_from > dt_to:
                 raise ValidationError("Invalid date range", details={"date_from": "must be <= date_to"})
 
+            relevance_sort = None
+            if relevance_raw == "desc":
+                relevance_sort = "desc"
+            elif relevance_raw == "asc":
+                relevance_sort = "asc"
+            elif relevance_raw not in ("", "none"):
+                raise ValidationError("Invalid fields", details={"relevance": "Use desc/asc"})
+
+            if trend not in ("all", "only", "exclude"):
+                raise ValidationError("Invalid fields", details={"trend": "Use all/only/exclude"})
+
             with SessionLocal() as session:
                 stmt = (
                     select(Article)
                     .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                    .outerjoin(ArticleSocialStat, ArticleSocialStat.entity_id == Article.id)
                 )
 
                 if source_id:
@@ -408,7 +422,22 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 if rubric_id is not None:
                     stmt = stmt.where(ArticleStat.rubric_id == rubric_id)
 
+                if trend == "only":
+                    stmt = stmt.where(ArticleSocialStat.is_trending.is_(True))
+                elif trend == "exclude":
+                    stmt = stmt.where(
+                        or_(
+                            ArticleSocialStat.is_trending.is_(False),
+                            ArticleSocialStat.is_trending.is_(None),
+                        )
+                    )
+
                 total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+                if relevance_sort == "asc":
+                    stmt = stmt.order_by(ArticleStat.key_words_count.asc().nulls_first())
+                elif relevance_sort == "desc":
+                    stmt = stmt.order_by(ArticleStat.key_words_count.desc().nulls_last())
 
                 if order == "asc":
                     stmt = stmt.order_by(

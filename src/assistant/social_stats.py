@@ -1,6 +1,6 @@
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, Optional
 
 from sqlalchemy import select
@@ -10,7 +10,12 @@ from src.assistant.vk_parser import _vk_call, _sleep_throttle
 from src.db.db import SessionLocal
 from src.db.models.article import Article
 from src.db.models.source import Source
-from src.db.social_stats import upsert_article_social_stat
+from src.db.models.article_social_stat_history import ArticleSocialStatHistory
+from src.db.social_stats import (
+    compute_engagement_score,
+    insert_article_social_stat_history,
+    upsert_article_social_stat,
+)
 
 
 _VK_LINK_RE = re.compile(r"wall(?P<owner>-?\d+)_(?P<post>\d+)")
@@ -59,10 +64,24 @@ def _iter_batches(items: list[tuple[int, int, int]], size: int) -> Iterable[list
         yield items[idx: idx + size]
 
 
+def _get_previous_engagement(session, article_id: int, cutoff: datetime) -> float | None:
+    return session.execute(
+        select(ArticleSocialStatHistory.engagement_score)
+        .where(
+            ArticleSocialStatHistory.entity_id == article_id,
+            ArticleSocialStatHistory.collected_at <= cutoff,
+        )
+        .order_by(ArticleSocialStatHistory.collected_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _collect_vk_stats(session, logger, items: list[tuple[int, int, int]], collected_at: datetime) -> int:
     processed = 0
     if not items:
         return 0
+
+    cutoff = collected_at - timedelta(hours=24)
 
     for batch in _iter_batches(items, 100):
         posts = [f"{owner_id}_{post_id}" for _, owner_id, post_id in batch]
@@ -80,6 +99,27 @@ def _collect_vk_stats(session, logger, items: list[tuple[int, int, int]], collec
             if not article_id:
                 continue
             like_count, repost_count, comment_count, view_count = _vk_counts_from_post(post)
+            engagement_score = compute_engagement_score(
+                like_count,
+                repost_count,
+                comment_count,
+            )
+            insert_article_social_stat_history(
+                session,
+                article_id,
+                like_count,
+                repost_count,
+                comment_count,
+                view_count,
+                engagement_score,
+                collected_at,
+            )
+            previous_engagement = _get_previous_engagement(session, article_id, cutoff)
+            engagement_delta = None
+            is_trending = False
+            if previous_engagement and previous_engagement > 0:
+                engagement_delta = (engagement_score - previous_engagement) / previous_engagement
+                is_trending = engagement_delta > 2.0
             upsert_article_social_stat(
                 session,
                 article_id,
@@ -87,6 +127,10 @@ def _collect_vk_stats(session, logger, items: list[tuple[int, int, int]], collec
                 repost_count,
                 comment_count,
                 view_count,
+                engagement_score,
+                previous_engagement,
+                engagement_delta,
+                is_trending,
                 collected_at,
             )
             processed += 1
@@ -141,6 +185,7 @@ def _collect_tg_stats(logger, channel_items: Dict[str, Dict[int, int]]) -> Dict[
 def run_social_stats_cycle(logger) -> int:
     processed = 0
     collected_at = datetime.now(timezone.utc)
+    cutoff = collected_at - timedelta(hours=24)
 
     with SessionLocal() as session:
         vk_rows = session.execute(
@@ -176,6 +221,27 @@ def run_social_stats_cycle(logger) -> int:
         tg_stats = _collect_tg_stats(logger, channel_items)
         for article_id, counts in tg_stats.items():
             like_count, repost_count, comment_count, view_count = counts
+            engagement_score = compute_engagement_score(
+                like_count,
+                repost_count,
+                comment_count,
+            )
+            insert_article_social_stat_history(
+                session,
+                article_id,
+                like_count,
+                repost_count,
+                comment_count,
+                view_count,
+                engagement_score,
+                collected_at,
+            )
+            previous_engagement = _get_previous_engagement(session, article_id, cutoff)
+            engagement_delta = None
+            is_trending = False
+            if previous_engagement and previous_engagement > 0:
+                engagement_delta = (engagement_score - previous_engagement) / previous_engagement
+                is_trending = engagement_delta > 2.0
             upsert_article_social_stat(
                 session,
                 article_id,
@@ -183,6 +249,10 @@ def run_social_stats_cycle(logger) -> int:
                 repost_count,
                 comment_count,
                 view_count,
+                engagement_score,
+                previous_engagement,
+                engagement_delta,
+                is_trending,
                 collected_at,
             )
             processed += 1

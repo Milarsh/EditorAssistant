@@ -127,6 +127,8 @@ paths:
         - $ref: '#/components/parameters/DateTo'
         - $ref: '#/components/parameters/Order'
         - $ref: '#/components/parameters/RubricId'
+        - $ref: '#/components/parameters/Trend'
+        - $ref: '#/components/parameters/Relevance'
       responses:
         '200':
           description: Успешно
@@ -1183,6 +1185,23 @@ components:
         minimum: 1
       description: |
         Фильтрует статьи по rubric id из статистики статьи (ArticleStat.rubric_id).
+    Trend:
+      name: trend
+      in: query
+      required: false
+      description: Фильтр по трендовости (по ArticleSocialStat.is_trending).
+      schema:
+        type: string
+        enum: [all, only, exclude]
+        default: all
+    Relevance:
+      name: relevance
+      in: query
+      required: false
+      description: Сортировка по релевантности (ArticleStat.key_words_count).
+      schema:
+        type: string
+        enum: [asc, desc]
     SettingsCodes:
       name: codes
       in: query
