@@ -11,7 +11,11 @@ from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
 from src.utils.settings import get_setting_bool, get_setting_int
-from src.db.social_stats import upsert_article_social_stat
+from src.db.social_stats import (
+    compute_engagement_score,
+    insert_article_social_stat_history,
+    upsert_article_social_stat,
+)
 
 from pathlib import Path
 import json
@@ -282,6 +286,21 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
                 if has_text:
                     try:
                         like_count, repost_count, comment_count, view_count = _tg_counts_from_msg(msg)
+                        engagement_score = compute_engagement_score(
+                            like_count,
+                            repost_count,
+                            comment_count,
+                        )
+                        insert_article_social_stat_history(
+                            session,
+                            new_id,
+                            like_count,
+                            repost_count,
+                            comment_count,
+                            view_count,
+                            engagement_score,
+                            fetched_at,
+                        )
                         upsert_article_social_stat(
                             session,
                             new_id,
@@ -289,6 +308,10 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
                             repost_count,
                             comment_count,
                             view_count,
+                            engagement_score,
+                            None,
+                            None,
+                            False,
                             fetched_at,
                         )
                     except Exception as exception:

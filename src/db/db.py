@@ -9,7 +9,7 @@ engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 
 REQUIRED_TABLES = {"sources", "articles", "users", "sessions", "auth_codes", "rubric", "settings",
-                   "article_key_word", "article_stat", "article_social_stat", "stop_word", "stop_category", "key_word", "article_stop_word"}
+                   "article_key_word", "article_stat", "article_social_stat", "article_social_stat_history", "stop_word", "stop_category", "key_word", "article_stop_word"}
 
 def create_schema():
     Base.metadata.create_all(engine)
