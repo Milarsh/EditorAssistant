@@ -116,29 +116,41 @@ async def download_tg_media_for_message(
     channel: str,
     max_bytes: int | None,
 ) -> list[str]:
-    dest_dir = Path(MEDIA_DIR) / "tg" / channel / str(msg.id)
-    _ensure_dir(dest_dir)
+    try:
+        if not msg.media:
+            return []
+        if getattr(msg, "photo", None):
+            is_image = True
+        else:
+            file = getattr(msg, "file", None)
+            mime = getattr(file, "mime_type", None)
+            is_image = bool(mime and mime.startswith("image/"))
+        if not is_image:
+            return []
+
+        msg_size = None
+        try:
+            msg_size = getattr(getattr(msg, "file", None), "size", None)
+        except Exception:
+            msg_size = None
+
+        if max_bytes and max_bytes > 0 and msg_size and msg_size > max_bytes:
+            return []
+
+        dest_dir = Path(MEDIA_DIR) / "tg" / channel / str(msg.id)
+        _ensure_dir(dest_dir)
+
+        try:
+            await client.download_media(msg, file=str(dest_dir))
+        except Exception:
+            pass
+    except Exception:
+        return []
 
     rel_urls: list[str] = []
     manifest: list[dict] = []
 
-    try:
-        if msg.media:
-            msg_size = None
-            try:
-                msg_size = getattr(getattr(msg, "file", None), "size", None)
-            except Exception:
-                msg_size = None
-
-            if max_bytes and max_bytes > 0 and msg_size and msg_size > max_bytes:
-                return []
-
-            try:
-                await client.download_media(msg, file=str(dest_dir))
-            except Exception:
-                pass
-    except Exception:
-        pass
+    image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
     for path in sorted(dest_dir.iterdir()) if dest_dir.exists() else []:
         if not path.is_file():
@@ -151,14 +163,15 @@ async def download_tg_media_for_message(
             except Exception:
                 pass
             continue
+        if path.suffix.lower() not in image_exts:
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            continue
         rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
         rel_urls.append(f"/media/{rel}")
-
-        ext = path.suffix.lower()
-        media_type = "image" if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else (
-            "video" if ext in {".mp4", ".mov", ".mkv", ".webm"} else "file"
-        )
-        manifest.append({"type": media_type, "file": path.name})
+        manifest.append({"type": "image", "file": path.name})
     _save_manifest(dest_dir, manifest)
     return rel_urls
 
