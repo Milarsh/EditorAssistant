@@ -11,6 +11,11 @@ from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
 from src.utils.settings import get_setting_bool, get_setting_int
+from src.db.social_stats import (
+    compute_engagement_score,
+    insert_article_social_stat_history,
+    upsert_article_social_stat,
+)
 
 from pathlib import Path
 import json
@@ -47,6 +52,19 @@ def _msg_to_article_fields(msg: Message, channel: str):
     fetched_at = datetime.now(timezone.utc)
     guid = f"tg:{channel}:{msg.id}"
     return title, description, link, guid, published_at, fetched_at
+
+
+def _tg_counts_from_msg(msg: Message) -> tuple[int, int, int, int]:
+    reactions = 0
+    reactions_obj = getattr(msg, "reactions", None)
+    if reactions_obj is not None:
+        results = getattr(reactions_obj, "results", None) or []
+        reactions = sum(int(getattr(r, "count", 0) or 0) for r in results)
+    reposts = int(getattr(msg, "forwards", 0) or 0)
+    replies = getattr(msg, "replies", None)
+    comments = int(getattr(replies, "replies", 0) or 0) if replies is not None else 0
+    views = int(getattr(msg, "views", 0) or 0)
+    return reactions, reposts, comments, views
 
 async def _ensure_client():
     if not API_ID or not API_HASH:
@@ -277,6 +295,40 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
                         updated = attach_children(session, parent_id, [new_id])
                         if updated:
                             logger.write(f"[LINK] TG set parent {parent_id} for child {new_id}")
+
+                if has_text:
+                    try:
+                        like_count, repost_count, comment_count, view_count = _tg_counts_from_msg(msg)
+                        engagement_score = compute_engagement_score(
+                            like_count,
+                            repost_count,
+                            comment_count,
+                        )
+                        insert_article_social_stat_history(
+                            session,
+                            new_id,
+                            like_count,
+                            repost_count,
+                            comment_count,
+                            view_count,
+                            engagement_score,
+                            fetched_at,
+                        )
+                        upsert_article_social_stat(
+                            session,
+                            new_id,
+                            like_count,
+                            repost_count,
+                            comment_count,
+                            view_count,
+                            engagement_score,
+                            None,
+                            None,
+                            False,
+                            fetched_at,
+                        )
+                    except Exception as exception:
+                        logger.write(f"[WARN] TG stats update failed for {channel}/{msg.id}: {exception}")
 
                 session.commit()
                 added += 1

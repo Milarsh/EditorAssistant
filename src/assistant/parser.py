@@ -12,6 +12,24 @@ from src.utils.analyzer import analyze_article_words
 from src.utils.logger import Logger
 
 from src.utils.settings import get_setting_int
+from src.assistant.social_stats import run_social_stats_cycle
+
+_last_social_stats_at: datetime | None = None
+
+
+def _maybe_run_social_stats(logger) -> int:
+    global _last_social_stats_at
+    now = datetime.now(timezone.utc)
+    interval_minutes = get_setting_int("social_stats_interval", 60)
+    if _last_social_stats_at is None:
+        _last_social_stats_at = now
+        return run_social_stats_cycle(logger)
+
+    elapsed = (now - _last_social_stats_at).total_seconds()
+    if elapsed >= interval_minutes * 60:
+        _last_social_stats_at = now
+        return run_social_stats_cycle(logger)
+    return 0
 
 logger = Logger("parser")
 
@@ -56,9 +74,12 @@ def run_cycle():
     total_added += run_tg_cycle(logger)
 
     stats_processed = run_stats_cycle()
+    social_stats_processed = _maybe_run_social_stats(logger)
 
     end = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logger.write(f"[CYCLE-END] {end} added={total_added} stats_processed={stats_processed}")
+    logger.write(
+        f"[CYCLE-END] {end} added={total_added} stats_processed={stats_processed} social_stats_processed={social_stats_processed}"
+    )
 
 def main():
     logger.ensure_log_dir()
