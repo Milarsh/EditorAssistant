@@ -12,6 +12,11 @@ from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
 from src.utils.settings import get_setting_bool, get_setting_int
+from src.db.social_stats import (
+    compute_engagement_score,
+    insert_article_social_stat_history,
+    upsert_article_social_stat,
+)
 
 from pathlib import Path
 import json
@@ -205,12 +210,48 @@ def process_vk_source(session, source, logger) -> int:
                 published_at=published_at,
                 fetched_at=now_utc,
             )
+            .returning(Article.id)
             .on_conflict_do_nothing(index_elements=["source_id", "guid"])
         )
-        res = session.execute(stmt)
-        if res.rowcount:
+        new_id = session.scalar(stmt)
+        if new_id:
             added += 1
             logger.write(f"[ADD] VK Source={source.name!r} Title={title!r}")
+            try:
+                like_count = int((post.get("likes") or {}).get("count") or 0)
+                repost_count = int((post.get("reposts") or {}).get("count") or 0)
+                comment_count = int((post.get("comments") or {}).get("count") or 0)
+                view_count = int((post.get("views") or {}).get("count") or 0)
+                engagement_score = compute_engagement_score(
+                    like_count,
+                    repost_count,
+                    comment_count,
+                )
+                insert_article_social_stat_history(
+                    session,
+                    new_id,
+                    like_count,
+                    repost_count,
+                    comment_count,
+                    view_count,
+                    engagement_score,
+                    now_utc,
+                )
+                upsert_article_social_stat(
+                    session,
+                    new_id,
+                    like_count,
+                    repost_count,
+                    comment_count,
+                    view_count,
+                    engagement_score,
+                    None,
+                    None,
+                    False,
+                    now_utc,
+                )
+            except Exception as exception:
+                logger.write(f"[WARN] VK stats update failed for post {owner_id}_{post_id}: {exception}")
             if media_keep:
                 try:
                     with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True) as client:
