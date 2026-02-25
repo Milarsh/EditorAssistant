@@ -83,7 +83,6 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client, 
 
     attachments = post.get("attachments") or []
     photo_index = 0
-    doc_index = 0
 
     for attachment in attachments:
         media_type = attachment.get("type")
@@ -98,28 +97,6 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client, 
                 rel = Path("vk") / str(owner_id) / str(post_id) / file_name
                 rel_urls.append(f"/media/{rel.as_posix()}")
                 manifest.append({"type": "photo", "file": file_name, "src": url})
-        elif media_type == "doc":
-            file_url = obj.get("url")
-            ext = (obj.get("ext") or "bin").split("?")[0][:8]
-            doc_index += 1
-            file_name = f"doc_{doc_index}.{ext}"
-            if file_url and _download_file(client, file_url, dest_dir / file_name, max_bytes):
-                rel = Path("vk") / str(owner_id) / str(post_id) / file_name
-                rel_urls.append(f"/media/{rel.as_posix()}")
-                manifest.append({"type": "doc", "file": file_name, "src": file_url})
-        elif media_type == "video":
-            owner = obj.get("owner_id")
-            video = obj.get("id")
-            if owner is not None and video is not None:
-                page_url = f"https://vk.com/video{owner}_{video}"
-                embed_url = f"https://vk.com/video_ext.php?oid={owner}&id={video}&hd=2"
-                manifest.append({
-                    "type": "video", 
-                    "page_url": page_url,
-                    "embed_url": embed_url,
-                    "owner_id": owner,
-                    "video_id": video,
-                    })
 
     _save_manifest(dest_dir, manifest)
     return rel_urls

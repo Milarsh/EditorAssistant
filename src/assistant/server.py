@@ -2,6 +2,7 @@ import os
 import io
 import json
 import re
+import zipfile
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -466,10 +467,11 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H-%M-%S")
             excel_name = f"statistics {timestamp}.xlsx"
+            media_dir_name = f"media {timestamp}"
 
             with SessionLocal() as session:
                 rows = session.execute(
-                    select(Article, Source.rss_url, ArticleStat, Rubric.title)
+                    select(Article, Source, ArticleStat, Rubric.title)
                     .join(Source, Source.id == Article.source_id)
                     .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
                     .outerjoin(Rubric, Rubric.id == ArticleStat.rubric_id)
@@ -516,45 +518,88 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 "Дата добавления в систему",
             ])
 
-            placeholder = "Нет данных"
-            total = 0
-
-            for article, source_url, stats, rubric_title in rows:
-                total += 1
+            for article, source, stats, rubric_title in rows:
 
                 stop_list = stop_map.get(article.id, [])
                 key_list = key_map.get(article.id, [])
 
-                stop_count = placeholder if not stats else stats.stop_words_count
-                key_count = placeholder if not stats else stats.key_words_count
-                rubric_value = rubric_title or placeholder
-                viewings_value = placeholder
+                stop_count = stats.stop_words_count if stats else 0
+                key_count = stats.key_words_count if stats else 0
+                rubric_value = rubric_title or ""
+
+                if source.type == "rss":
+                    viewings_value = "Нет данных"
+                else:
+                    viewings_value = getattr(stats, "viewings", None) if stats else None
+                    viewings_value = viewings_value if viewings_value is not None else ""
 
                 sheet.append([
                     article.id,
                     article.title or "",
                     article.link or "",
-                    source_url or "",
+                    source.rss_url or "",
                     rubric_value,
                     viewings_value,
                     stop_count,
-                    ", ".join(stop_list) if stop_list else placeholder,
+                    ", ".join(stop_list),
                     key_count,
-                    ", ".join(key_list) if key_list else placeholder,
-                    _format_dt(article.published_at) or placeholder,
-                    _format_dt(article.fetched_at) or placeholder,
+                    ", ".join(key_list),
+                    _format_dt(article.published_at),
+                    _format_dt(article.fetched_at),
                 ])
 
-            buffer = io.BytesIO()
-            workbook.save(buffer)
-            data = buffer.getvalue()
+            excel_buffer = io.BytesIO()
+            workbook.save(excel_buffer)
+            excel_bytes = excel_buffer.getvalue()
+
+            def _is_image_file(path: Path) -> bool:
+                mime, _ = mimetypes.guess_type(path.name)
+                if (mime or "").startswith("image/"):
+                    return True
+                return path.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+            def _iter_article_images(article_obj: Article) -> list[Path]:
+                if not article_obj.guid:
+                    return []
+                parts = article_obj.guid.split(":", 2)
+                if len(parts) != 3:
+                    return []
+                kind, part1, part2 = parts
+                if kind == "vk":
+                    media_dir = _safe_join(MEDIA_DIR, "vk", part1, part2)
+                elif kind == "tg":
+                    media_dir = _safe_join(MEDIA_DIR, "tg", part1, part2)
+                else:
+                    return []
+                if not media_dir.exists() or not media_dir.is_dir():
+                    return []
+                images: list[Path] = []
+                for path in sorted(media_dir.iterdir()):
+                    if not path.is_file() or path.name == "media.json":
+                        continue
+                    if _is_image_file(path):
+                        images.append(path)
+                return images
+
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+                zip_file.writestr(excel_name, excel_bytes)
+                zip_file.writestr(f"{media_dir_name}/", b"")
+
+                for article, _, _, _ in rows:
+                    images = _iter_article_images(article)
+                    if not images:
+                        continue
+                    for image_path in images:
+                        arcname = f"{media_dir_name}/{article.id}/{image_path.name}"
+                        zip_file.write(image_path, arcname)
+
+            data = zip_buffer.getvalue()
+            archive_name = f"export {timestamp}.zip"
 
             self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-            self.send_header("Content-Disposition", f'attachment; filename="{excel_name}"')
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{archive_name}"')
             self.send_header("Content-Length", str(len(data)))
             origin = self.headers.get("Origin")
             if origin:
@@ -645,6 +690,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     raise NotFound("Article not found")
 
                 assets = []
+                image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
                 try:
                     if article.guid and article.guid.startswith("vk:"):
@@ -664,27 +710,14 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                                 rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
                                 file_url = f"/media/{rel}"
                                 mime, _ = mimetypes.guess_type(path.name)
-                                type = "image" if (mime or "").startswith("image/") else "file"
+                                if not (mime or "").startswith("image/") and path.suffix.lower() not in image_exts:
+                                    continue
                                 assets.append({
-                                    "type": type,
+                                    "type": "image",
                                     "file_url": file_url,
                                     "mime": mime or "application/octet-stream",
                                     "name": path.name,
                                 })
-
-                            manifest_path = found_dir / "media.json"
-                            if manifest_path.exists():
-                                try:
-                                    meta = json.loads(manifest_path.read_text(encoding="utf-8"))
-                                    for it in meta:
-                                        if it.get("type") == "video":
-                                            assets.append({
-                                                "type": "video",
-                                                "page_url": it.get("page_url"),
-                                                "embed_url": it.get("embed_url"),
-                                            })
-                                except Exception as exception:
-                                    print(f"[WARN] bad media.json for article {article_id}: {exception}")
                     elif article.guid and article.guid.startswith("tg:"):
                         _, channel, msg_id = article.guid.split(":", 2)
                         found_dir = None
@@ -697,11 +730,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                                 if path.is_file() and path.name != "media.json":
                                     rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
                                     mime, _ = mimetypes.guess_type(path.name)
-                                    type = "image" if (mime or "").startswith("image/") else (
-                                        "video" if (mime or "").startswith("video/") else "file"
-                                    )
+                                    if not (mime or "").startswith("image/") and path.suffix.lower() not in image_exts:
+                                        continue
                                     assets.append({
-                                        "type": type,
+                                        "type": "image",
                                         "file_url": f"/media/{rel}",
                                         "mime": mime or "application/octet-stream",
                                         "name": path.name,

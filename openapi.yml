@@ -163,12 +163,12 @@ paths:
     get:
       tags:
         - Articles
-      summary: Экспорт статистики статей в Excel
+      summary: Экспорт статистики и изображений
       responses:
         '200':
-          description: Экспорт сформирован, файл Excel
+          description: Экспорт сформирован, zip-архив с Excel и папкой изображений
           content:
-            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            application/zip:
               schema:
                 type: string
                 format: binary
@@ -196,12 +196,10 @@ paths:
     get:
       tags:
       - Articles
-      summary: Медиа-данные статьи (локальные файлы и данные о видео)
+      summary: Медиа-данные статьи (локальные изображения)
       description: |
-        Возвращает список медиа (assets) для статьи.  
-        Локальные файлы (картинки/документы) отдаются через `/media/...`.  
-        Видео — внешние ссылки/встраиваемый плеер VK.
-        Видео из Telegram скачиваются.
+        Возвращает список изображений (assets) для статьи.  
+        Локальные файлы отдаются через `/media/...`.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -1325,10 +1323,7 @@ components:
         assets:
           type: array
           items:
-            oneOf:
-              - $ref: '#/components/schemas/AssetImage'
-              - $ref: '#/components/schemas/AssetFile'
-              - $ref: '#/components/schemas/AssetVideo'
+            $ref: '#/components/schemas/AssetImage'
     ArticleChildrenResponse:
       type: object
       required: [id, total, limit, offset, items]
@@ -1376,42 +1371,6 @@ components:
         name:
           type: string
           example: photo_1.jpg
-    AssetFile:
-      type: object
-      required: [type, file_url, mime, name]
-      properties:
-        type:
-          type: string
-          enum: [file]
-        file_url:
-          type: string
-          example: /media/vk/-40316705/54155576/doc_1.pdf
-        mime:
-          type: string
-          example: application/pdf
-        name:
-          type: string
-          example: doc_1.pdf
-    AssetVideo:
-      type: object
-      required: [type, embed_url]
-      properties:
-        type:
-          type: string
-          enum: [video]
-        embed_url:
-          type: string
-          description: Встраиваемый плеер VK
-          example: https://vk.com/video_ext.php?oid=-40316705&id=54155576&hd=2
-        page_url:
-          type: string
-          description: Страница видео VK
-          example: https://vk.com/video-40316705_54155576
-        poster:
-          type: string
-          nullable: true
-          description: URL постера (обычно локальный `/media/...`), если сохранён
-          example: /media/vk/-40316705/54155576/video_poster.jpg
     TgAuthUser:
       type: object
       properties:
