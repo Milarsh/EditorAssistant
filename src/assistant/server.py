@@ -553,7 +553,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             placeholder = "Нет данных"
             total = 0
 
-            for article, source_url, stats, rubric_title, social_stats in rows:
+            for article, source, stats, rubric_title, social_stats in rows:
                 total += 1
 
                 stop_list = stop_map.get(article.id, [])
@@ -617,7 +617,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 zip_file.writestr(excel_name, excel_bytes)
                 zip_file.writestr(f"{media_dir_name}/", b"")
 
-                for article, _, _, _ in rows:
+                for article, _, _, _, _ in rows:
                     images = _iter_article_images(article)
                     if not images:
                         continue
