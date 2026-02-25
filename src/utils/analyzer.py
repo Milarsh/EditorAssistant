@@ -143,3 +143,14 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
     session.commit()
     session.refresh(stats)
     return stats
+
+
+def analyze_all_articles(session) -> int:
+    article_ids = session.execute(
+        select(Article.id).order_by(Article.id.asc())
+    ).scalars().all()
+    total = 0
+    for article_id in article_ids:
+        analyze_article_words(session, int(article_id))
+        total += 1
+    return total

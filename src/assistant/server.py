@@ -3,6 +3,7 @@ import io
 import json
 import re
 import zipfile
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -24,7 +25,7 @@ from sqlalchemy import select, func, delete, and_, or_
 from sqlalchemy.exc import IntegrityError
 
 from src.utils.slugifier import slugify_code
-from src.utils.analyzer import analyze_article_words
+from src.utils.analyzer import analyze_article_words, analyze_all_articles
 from src.utils.settings import get_setting_options as get_setting_options_meta, get_all_setting_codes, validate_setting_value
 
 from dataclasses import dataclass, field
@@ -39,6 +40,23 @@ from src.assistant.tg_auth import start_qr_sync, status_sync, submit_password_sy
 from src.assistant.auth import register_auth_endpoints
 
 MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
+
+_recompute_lock = threading.Lock()
+
+def _enqueue_words_recompute():
+    if _recompute_lock.locked():
+        return
+
+    def _worker():
+        try:
+            with _recompute_lock:
+                with SessionLocal() as session:
+                    analyze_all_articles(session)
+        except Exception as exception:
+            print(f"[ERROR] words recompute failed: {exception}")
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
 
 def _safe_join(base: str, *parts: str) -> Path:
     base_path = Path(base).resolve()
@@ -1232,6 +1250,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj.code = code
                     obj.rubric_id = rubric_id
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -1249,6 +1268,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj = KeyWord(value=value, code=code, rubric_id=rubric_id)
                     session.add(obj)
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -1265,6 +1285,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     raise NotFound("Key word not found")
                 session.delete(obj)
                 session.commit()
+                _enqueue_words_recompute()
                 self._json_ok({"status": "deleted", "id": word_id})
 
 
@@ -1335,6 +1356,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj.code = code
                     obj.category_id = category_id
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -1352,6 +1374,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj = StopWord(value=value, code=code, category_id=category_id)
                     session.add(obj)
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -1368,6 +1391,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     raise NotFound("Stop word not found")
                 session.delete(obj)
                 session.commit()
+                _enqueue_words_recompute()
                 self._json_ok({"status": "deleted", "id": word_id})
 
         # rubrics
