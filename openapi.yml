@@ -127,6 +127,7 @@ paths:
         - $ref: '#/components/parameters/DateTo'
         - $ref: '#/components/parameters/Order'
         - $ref: '#/components/parameters/RubricId'
+        - $ref: '#/components/parameters/StopWords'
         - $ref: '#/components/parameters/Trend'
         - $ref: '#/components/parameters/Relevance'
       responses:
@@ -1200,6 +1201,17 @@ components:
       schema:
         type: string
         enum: [asc, desc]
+    StopWords:
+      name: stop_words
+      in: query
+      required: false
+      description: |
+        Фильтр по наличию стоп-слов.
+        any = без разницы, with = есть стоп-слова, without = нет стоп-слов.
+      schema:
+        type: string
+        enum: [any, with, without]
+        default: any
     SettingsCodes:
       name: codes
       in: query

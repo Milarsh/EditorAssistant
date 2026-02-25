@@ -351,6 +351,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             limit = max(1, min(100, int(query.get("limit", [20])[0])))
             offset = max(0, int(query.get("offset", [0])[0]))
 
+            stop_words_filter = (query.get("stop_words", ["any"])[0] or "any").strip().lower()
+            if stop_words_filter not in {"any", "with", "without"}:
+                raise ValidationError("Invalid fields", details={
+                    "stop_words": "Use any, with, or without",
+                })
+
             date_from_raw = (query.get("date_from", [""])[0] or "").strip()
             date_to_raw = (query.get("date_to", [""])[0] or "").strip()
             order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
@@ -422,6 +428,16 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
                 if rubric_id is not None:
                     stmt = stmt.where(ArticleStat.rubric_id == rubric_id)
+
+                if stop_words_filter == "with":
+                    stmt = stmt.where(ArticleStat.stop_words_count > 0)
+                elif stop_words_filter == "without":
+                    stmt = stmt.where(
+                        or_(
+                            ArticleStat.stop_words_count <= 0,
+                            ArticleStat.entity_id.is_(None),
+                        )
+                    )
 
                 if trend == "only":
                     stmt = stmt.where(ArticleSocialStat.is_trending.is_(True))
