@@ -267,6 +267,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 self.send_header("Vary", "Origin")
             else:
                 self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
             self.end_headers()
