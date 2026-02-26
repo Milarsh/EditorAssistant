@@ -3,7 +3,12 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from src.db.models.base import Base
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://editor:editor_pwd_dev@db:5432/editor_assistant")
+pg_db = os.getenv("POSTGRES_DB", "editor_assistant")
+pg_user = os.getenv("POSTGRES_USER", "editor")
+pg_password = os.getenv("POSTGRES_PASSWORD", "editor_pwd_dev")
+pg_host = os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "db"))
+pg_port = os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432"))
+DATABASE_URL = f"postgresql+psycopg://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
