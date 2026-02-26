@@ -84,8 +84,8 @@ def run_cycle():
 def main():
     logger.ensure_log_dir()
     logger.write("[PARSER] Parser started")
-    interval_minutes = get_setting_int("poll_interval", 5)
     while True:
+        interval_minutes = max(1, get_setting_int("poll_interval", 5))
         run_cycle()
         time.sleep(interval_minutes * 60)
 
