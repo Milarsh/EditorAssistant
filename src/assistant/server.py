@@ -1227,8 +1227,11 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 if not rubric:
                     raise ValidationError("Invalid fields", details={"rubric_id": "Rubric not found"})
 
-                existing = session.execute(
-                    select(KeyWord).where(KeyWord.code == code)
+                existing_same = session.execute(
+                    select(KeyWord).where(
+                        KeyWord.code == code,
+                        KeyWord.rubric_id == rubric_id,
+                    )
                 ).scalar_one_or_none()
 
                 if word_id is not None:
@@ -1241,10 +1244,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     if not obj:
                         raise NotFound("Key word not found")
 
-                    if existing and existing.id != obj.id:
+                    if existing_same and existing_same.id != obj.id:
                         raise Conflict(
-                            "Key word with same code already exists",
-                            details={"code": code}
+                            "Key word with same code already exists in this rubric",
+                            details={"code": code, "rubric_id": rubric_id},
                         )
 
                     obj.value = value
@@ -1260,10 +1263,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "rubric_id": obj.rubric_id,
                     })
                 else:
-                    if existing:
+                    if existing_same:
                         raise Conflict(
-                            "Key word with same code already exists",
-                            details={"code": code}
+                            "Key word with same code already exists in this rubric",
+                            details={"code": code, "rubric_id": rubric_id},
                         )
 
                     obj = KeyWord(value=value, code=code, rubric_id=rubric_id)
