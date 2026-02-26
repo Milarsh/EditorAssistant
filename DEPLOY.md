@@ -3,18 +3,25 @@
 Инструкция для бэкенда ([EditorAssistant](https://github.com/Milarsh/EditorAssistant)) и фронтенда ([EditorAssistantFront](https://github.com/Milarsh/EditorAssistantFront)) на Ubuntu 22.04+.
 
 ## 1. Подготовка сервера
-- Установите Docker и Compose plugin:
+- Установите Docker + Compose:
   ```bash
   sudo apt update
-  sudo apt install -y ca-certificates curl git docker.io docker-compose-plugin
+  sudo apt install -y ca-certificates curl gnupg git
+
+  sudo install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  sudo apt update
+  sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   sudo systemctl enable --now docker
   sudo usermod -aG docker "$USER"   # перелогиньтесь после этого
   ```
-- Установите Node.js 18+ и Yarn (нужно для сборки/запуска фронтенда):
+- Установите актуальный Node.js и Yarn (нужно для сборки/запуска фронтенда):
   ```bash
-  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
   sudo apt install -y nodejs
-  npm install -g yarn
+  sudo npm install -g yarn
   ```
 
 ## 2. Клонирование репозиториев
@@ -26,7 +33,7 @@ git clone https://github.com/Milarsh/EditorAssistantFront
 
 ## 3. Переменные окружения — бэкенд
 ```bash
-cd service/EditorAssistant
+cd ~/service/EditorAssistant
 cp .env.example .env
 ```
 Заполните `.env` минимум:
