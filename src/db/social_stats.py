@@ -11,9 +11,9 @@ def compute_engagement_score(
     comment_count: int,
 ) -> float:
     return (
-        max(0, int(like_count or 0)) * 1.2
-        + max(0, int(comment_count or 0)) * 2.0
-        + max(0, int(repost_count or 0)) * 3.0
+        max(0, int(comment_count or 0)) * 1.0
+        + max(0, int(like_count or 0)) * 0.5
+        + max(0, int(repost_count or 0)) * 2.0
     )
 
 
