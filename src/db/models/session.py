@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, DateTime, Integer, Index, ForeignKey, UniqueConstraint, text
+from sqlalchemy import String, Boolean, DateTime, Integer, Index, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.db.models.base import Base
 from datetime import datetime
@@ -44,10 +44,5 @@ class Session(Base):
 
     __table_args__ = (
         UniqueConstraint("session_hash", name="uq_sessions_hash"),
-        Index(
-            "uq_sessions_user_active",
-            "user_id",
-            unique=True,
-            postgresql_where=text("revoked_at IS NULL"),
-        ),
+        Index("ix_sessions_user_revoked", "user_id", "revoked_at"),
     )
