@@ -1284,6 +1284,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 obj = session.get(KeyWord, word_id)
                 if not obj:
                     raise NotFound("Key word not found")
+                session.execute(
+                    delete(ArticleKeyWord).where(ArticleKeyWord.key_word_id == word_id)
+                )
                 session.delete(obj)
                 session.commit()
                 _enqueue_words_recompute()
@@ -1390,6 +1393,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 obj = session.get(StopWord, word_id)
                 if not obj:
                     raise NotFound("Stop word not found")
+                session.execute(
+                    delete(ArticleStopWord).where(ArticleStopWord.stop_word_id == word_id)
+                )
                 session.delete(obj)
                 session.commit()
                 _enqueue_words_recompute()
