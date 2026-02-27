@@ -93,21 +93,19 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         stop_items, full_text
     )
 
-    # ave -
-    key_words = session.execute(select(KeyWord)).scalars().all()
-    key_items = [(w.id, w.value, w.rubric_id) for w in key_words]
-
-    key_texts = [w.value for w in key_words if w.value and w.value.strip()]
+    kwords = session.execute(select(KeyWord)).scalars().all()
+    kitems = [[w.id, w.value, w.rubric_id] for w in key_words]
+    key_texts = [kit[1] for kit in kitems]
 
     key_counts_by_id = {}
     rubric_counts = defaultdict(int)
 
-    for idx, key_word in enumerate(key_words):
-            rel, _ = Relevance(full_text, key_word) # in [0;1]
-            if rel > 0.3:
-                key_counts_by_id[key_word.id] = rel
-                rubric_counts[key_word.rubric_id] += 1
-    # - ave
+    rel = Relevance(full_text, kwords) # in [0;1]
+
+    for idx, kword in enumerate(kwords):
+            if rel[idx] > 0.3:
+                key_counts_by_id[kword.id] = rel[idx]
+                rubric_counts[kword.rubric_id] += 1
     
     session.execute(
         delete(ArticleStopWord).where(ArticleStopWord.entity_id == article.id)
