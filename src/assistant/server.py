@@ -378,7 +378,13 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
             date_from_raw = (query.get("date_from", [""])[0] or "").strip()
             date_to_raw = (query.get("date_to", [""])[0] or "").strip()
-            order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
+            order_raw = (query.get("order", [""])[0] or "").strip().lower()
+            if order_raw in ("", None):
+                order = "desc"
+            elif order_raw in ("asc", "desc"):
+                order = order_raw
+            else:
+                raise ValidationError("Invalid fields", details={"order": "Use asc/desc"})
             trend = (query.get("trend", ["all"])[0] or "all").strip().lower()
             relevance_raw = (query.get("relevance", [""])[0] or "").strip().lower()
 
