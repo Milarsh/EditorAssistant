@@ -5,6 +5,8 @@ from typing import Dict, Iterable, Optional
 
 from sqlalchemy import select
 
+from telethon.errors.rpcerrorlist import ChannelPrivateError
+
 from src.assistant.tg_parser import _ensure_client
 from src.assistant.vk_parser import _vk_call, _sleep_throttle
 from src.db.db import SessionLocal
@@ -150,7 +152,14 @@ async def _collect_tg_stats_async(logger, channel_items: Dict[str, Dict[int, int
             if not msg_map:
                 continue
             msg_ids = list(msg_map.keys())
-            messages = await client.get_messages(channel, ids=msg_ids)
+            try:
+                messages = await client.get_messages(channel, ids=msg_ids)
+            except ChannelPrivateError as exc:
+                logger.write(f"[WARN] TG stats skip channel={channel}: {exc}")
+                continue
+            except Exception as exc:
+                logger.write(f"[WARN] TG stats fetch failed for channel={channel}: {exc}")
+                continue
             for msg in messages or []:
                 if msg is None:
                     continue
