@@ -95,6 +95,7 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
 
     kwords = session.execute(select(KeyWord)).scalars().all()
     key_texts = [w.value for w in kwords]
+    active_key_ids = {w.id for w in kwords}
 
     key_counts_by_id = {}
     rubric_counts = defaultdict(int)
@@ -119,11 +120,19 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
                 ArticleStopWord(entity_id=article.id, stop_word_id=stop_id)
             )
 
+    inserted_key_ids = []
     for key_id, count in key_counts_by_id.items():
-        if count > 0:
-            session.add(
-                ArticleKeyWord(entity_id=article.id, key_word_id=key_id)
-            )
+        if count <= 0:
+            continue
+        if key_id not in active_key_ids:
+            continue
+        if session.get(KeyWord, key_id) is None:
+            continue
+
+        session.add(
+            ArticleKeyWord(entity_id=article.id, key_word_id=key_id)
+        )
+        inserted_key_ids.append(key_id)
 
     rubric_id = None
     if rubric_counts:
@@ -143,7 +152,7 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         session.add(stats)
 
     stats.stop_words_count = int(stop_total)
-    stats.key_words_count = len(key_counts_by_id)
+    stats.key_words_count = len(inserted_key_ids)
     stats.rubric_id = rubric_id
     stats.stop_category_id = stop_category_id
 
