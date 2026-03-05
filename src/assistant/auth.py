@@ -128,16 +128,32 @@ def auth_register(self, match, query):
         return self._json_error(400, "bad_request", "Invalid fields", errors)
 
     with SessionLocal() as db:
-        if db.scalar(select(func.count()).select_from(User).where(User.email == email)) > 0:
+        now = _now_utc()
+
+        def _cleanup_inactive_with_expired_code(user: User | None) -> bool:
+            if not user or user.is_active:
+                return False
+            ac = db.execute(
+                select(AuthCode).where(AuthCode.user_id == user.id, AuthCode.purpose == "email_confirm")
+            ).scalar_one_or_none()
+            if ac is None or ac.expires_at <= now:
+                db.delete(user)
+                db.flush()
+                return True
+            return False
+
+        existing_email_user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if not _cleanup_inactive_with_expired_code(existing_email_user) and existing_email_user:
             return self._json_error(409, "conflict", "Email already registered")
-        if db.scalar(select(func.count()).select_from(User).where(User.login == login)) > 0:
+
+        existing_login_user = db.execute(select(User).where(User.login == login)).scalar_one_or_none()
+        if not _cleanup_inactive_with_expired_code(existing_login_user) and existing_login_user:
             return self._json_error(409, "conflict", "Login already taken")
 
         user = User(email=email, login=login, password_hash=_hash_password(password), is_active=False)
         db.add(user)
         db.flush()
 
-        now = _now_utc()
         code = _gen_code(AUTH_CODE_LEN)
         code_hash = _hash_code(code)
         auth_code = db.execute(
