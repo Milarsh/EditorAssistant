@@ -11,6 +11,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
+from src.utils.settings import get_setting_bool, get_setting_int
+from src.db.social_stats import (
+    compute_engagement_score,
+    insert_article_social_stat_history,
+    upsert_article_social_stat,
+)
 
 from pathlib import Path
 import json
@@ -48,10 +54,16 @@ def _best_image_url(images: list[dict]) -> str | None:
     return best
 
 
-def _download_file(client: httpx.Client, url: str, dest: Path) -> bool:
+def _download_file(client: httpx.Client, url: str, dest: Path, max_bytes: int | None) -> bool:
     try:
         response = client.get(url, timeout=FETCH_TIMEOUT)
         response.raise_for_status()
+        if max_bytes and max_bytes > 0:
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > max_bytes:
+                return False
+            if len(response.content) > max_bytes:
+                return False
         dest.write_bytes(response.content)
         return True
     except Exception:
@@ -63,7 +75,7 @@ def _save_manifest(dir_path: Path, entries: list[dict]):
     except Exception:
         pass
 
-def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) -> list[str]:
+def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client, max_bytes: int | None) -> list[str]:
     post_id = post.get("id")
     if not post_id:
         return []
@@ -76,7 +88,6 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) 
 
     attachments = post.get("attachments") or []
     photo_index = 0
-    doc_index = 0
 
     for attachment in attachments:
         media_type = attachment.get("type")
@@ -87,32 +98,10 @@ def download_vk_media_for_post(post: dict, owner_id: int, client: httpx.Client) 
                 continue
             photo_index += 1
             file_name = f"photo_{photo_index}.jpg"
-            if _download_file(client, url, dest_dir / file_name):
+            if _download_file(client, url, dest_dir / file_name, max_bytes):
                 rel = Path("vk") / str(owner_id) / str(post_id) / file_name
                 rel_urls.append(f"/media/{rel.as_posix()}")
                 manifest.append({"type": "photo", "file": file_name, "src": url})
-        elif media_type == "doc":
-            file_url = obj.get("url")
-            ext = (obj.get("ext") or "bin").split("?")[0][:8]
-            doc_index += 1
-            file_name = f"doc_{doc_index}.{ext}"
-            if file_url and _download_file(client, file_url, dest_dir / file_name):
-                rel = Path("vk") / str(owner_id) / str(post_id) / file_name
-                rel_urls.append(f"/media/{rel.as_posix()}")
-                manifest.append({"type": "doc", "file": file_name, "src": file_url})
-        elif media_type == "video":
-            owner = obj.get("owner_id")
-            video = obj.get("id")
-            if owner is not None and video is not None:
-                page_url = f"https://vk.com/video{owner}_{video}"
-                embed_url = f"https://vk.com/video_ext.php?oid={owner}&id={video}&hd=2"
-                manifest.append({
-                    "type": "video", 
-                    "page_url": page_url,
-                    "embed_url": embed_url,
-                    "owner_id": owner,
-                    "video_id": video,
-                    })
 
     _save_manifest(dest_dir, manifest)
     return rel_urls
@@ -170,6 +159,9 @@ def fetch_wall(owner_id: int, count: int = 100) -> list[dict]:
     return response.get("items", [])
 
 def process_vk_source(session, source, logger) -> int:
+    media_keep = get_setting_bool("media_keep", True)
+    max_mb = get_setting_int("media_max_size_mb", 50)
+    max_bytes = None if max_mb <= 0 else int(max_mb) * 1024 * 1024
     try:
         owner_id = owner_id_from_url(source.rss_url)
     except Exception as exception:
@@ -218,17 +210,54 @@ def process_vk_source(session, source, logger) -> int:
                 published_at=published_at,
                 fetched_at=now_utc,
             )
+            .returning(Article.id)
             .on_conflict_do_nothing(index_elements=["source_id", "guid"])
         )
-        res = session.execute(stmt)
-        if res.rowcount:
+        new_id = session.scalar(stmt)
+        if new_id:
             added += 1
             logger.write(f"[ADD] VK Source={source.name!r} Title={title!r}")
             try:
-                with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True) as client:
-                    download_vk_media_for_post(post, owner_id, client)
+                like_count = int((post.get("likes") or {}).get("count") or 0)
+                repost_count = int((post.get("reposts") or {}).get("count") or 0)
+                comment_count = int((post.get("comments") or {}).get("count") or 0)
+                view_count = int((post.get("views") or {}).get("count") or 0)
+                engagement_score = compute_engagement_score(
+                    like_count,
+                    repost_count,
+                    comment_count,
+                )
+                insert_article_social_stat_history(
+                    session,
+                    new_id,
+                    like_count,
+                    repost_count,
+                    comment_count,
+                    view_count,
+                    engagement_score,
+                    now_utc,
+                )
+                upsert_article_social_stat(
+                    session,
+                    new_id,
+                    like_count,
+                    repost_count,
+                    comment_count,
+                    view_count,
+                    engagement_score,
+                    None,
+                    None,
+                    False,
+                    now_utc,
+                )
             except Exception as exception:
-                logger.write(f"[WARN] VK media download failed for post {owner_id}_{post_id}: {exception}")
+                logger.write(f"[WARN] VK stats update failed for post {owner_id}_{post_id}: {exception}")
+            if media_keep:
+                try:
+                    with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True) as client:
+                        download_vk_media_for_post(post, owner_id, client, max_bytes)
+                except Exception as exception:
+                    logger.write(f"[WARN] VK media download failed for post {owner_id}_{post_id}: {exception}")
 
     if added:
         session.commit()

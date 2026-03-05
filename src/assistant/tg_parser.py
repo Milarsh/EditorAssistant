@@ -10,6 +10,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from src.db.db import SessionLocal
 from src.db.models.source import Source
 from src.db.models.article import Article
+from src.utils.settings import get_setting_bool, get_setting_int
+from src.db.social_stats import (
+    compute_engagement_score,
+    insert_article_social_stat_history,
+    upsert_article_social_stat,
+)
 
 from pathlib import Path
 import json
@@ -46,6 +52,19 @@ def _msg_to_article_fields(msg: Message, channel: str):
     fetched_at = datetime.now(timezone.utc)
     guid = f"tg:{channel}:{msg.id}"
     return title, description, link, guid, published_at, fetched_at
+
+
+def _tg_counts_from_msg(msg: Message) -> tuple[int, int, int, int]:
+    reactions = 0
+    reactions_obj = getattr(msg, "reactions", None)
+    if reactions_obj is not None:
+        results = getattr(reactions_obj, "results", None) or []
+        reactions = sum(int(getattr(r, "count", 0) or 0) for r in results)
+    reposts = int(getattr(msg, "forwards", 0) or 0)
+    replies = getattr(msg, "replies", None)
+    comments = int(getattr(replies, "replies", 0) or 0) if replies is not None else 0
+    views = int(getattr(msg, "views", 0) or 0)
+    return reactions, reposts, comments, views
 
 async def _ensure_client():
     if not API_ID or not API_HASH:
@@ -91,40 +110,76 @@ def _save_manifest(dir_path: Path, entries: list[dict]):
     except Exception:
         pass
 
-async def download_tg_media_for_message(client: TelegramClient, msg: Message, channel: str) -> list[str]:
-    dest_dir = Path(MEDIA_DIR) / "tg" / channel / str(msg.id)
-    _ensure_dir(dest_dir)
+async def download_tg_media_for_message(
+    client: TelegramClient,
+    msg: Message,
+    channel: str,
+    max_bytes: int | None,
+) -> list[str]:
+    try:
+        if not msg.media:
+            return []
+        if getattr(msg, "photo", None):
+            is_image = True
+        else:
+            file = getattr(msg, "file", None)
+            mime = getattr(file, "mime_type", None)
+            is_image = bool(mime and mime.startswith("image/"))
+        if not is_image:
+            return []
+
+        msg_size = None
+        try:
+            msg_size = getattr(getattr(msg, "file", None), "size", None)
+        except Exception:
+            msg_size = None
+
+        if max_bytes and max_bytes > 0 and msg_size and msg_size > max_bytes:
+            return []
+
+        dest_dir = Path(MEDIA_DIR) / "tg" / channel / str(msg.id)
+        _ensure_dir(dest_dir)
+
+        try:
+            await client.download_media(msg, file=str(dest_dir))
+        except Exception:
+            pass
+    except Exception:
+        return []
 
     rel_urls: list[str] = []
     manifest: list[dict] = []
 
-    try:
-        if msg.media:
-            try:
-                await client.download_media(msg, file=str(dest_dir))
-            except Exception as exception:
-                pass
-    except Exception:
-        pass
+    image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
     for path in sorted(dest_dir.iterdir()) if dest_dir.exists() else []:
         if not path.is_file():
             continue
         if path.name == "media.json":
             continue
+        if max_bytes and max_bytes > 0 and path.stat().st_size > max_bytes:
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            continue
+        if path.suffix.lower() not in image_exts:
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            continue
         rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
         rel_urls.append(f"/media/{rel}")
-
-        ext = path.suffix.lower()
-        media_type = "image" if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else (
-            "video" if ext in {".mp4", ".mov", ".mkv", ".webm"} else "file"
-        )
-        manifest.append({"type": media_type, "file": path.name})
+        manifest.append({"type": "image", "file": path.name})
     _save_manifest(dest_dir, manifest)
     return rel_urls
 
 
 async def _process_tg_source(client: TelegramClient, source: Source, logger) -> int:
+    media_keep = get_setting_bool("media_keep", True)
+    max_mb = get_setting_int("media_max_size_mb", 50)
+    max_bytes = None if max_mb <= 0 else int(max_mb) * 1024 * 1024
     channel = _channel_from_url(source.rss_url or "")
     if not channel:
         logger.write(f"[ERROR] TG invalid URL: {source.rss_url}")
@@ -241,14 +296,49 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
                         if updated:
                             logger.write(f"[LINK] TG set parent {parent_id} for child {new_id}")
 
+                if has_text:
+                    try:
+                        like_count, repost_count, comment_count, view_count = _tg_counts_from_msg(msg)
+                        engagement_score = compute_engagement_score(
+                            like_count,
+                            repost_count,
+                            comment_count,
+                        )
+                        insert_article_social_stat_history(
+                            session,
+                            new_id,
+                            like_count,
+                            repost_count,
+                            comment_count,
+                            view_count,
+                            engagement_score,
+                            fetched_at,
+                        )
+                        upsert_article_social_stat(
+                            session,
+                            new_id,
+                            like_count,
+                            repost_count,
+                            comment_count,
+                            view_count,
+                            engagement_score,
+                            None,
+                            None,
+                            False,
+                            fetched_at,
+                        )
+                    except Exception as exception:
+                        logger.write(f"[WARN] TG stats update failed for {channel}/{msg.id}: {exception}")
+
                 session.commit()
                 added += 1
                 logger.write(f"[ADD] TG Source={source.name!r} Title={title!r}")
 
-                try:
-                    await download_tg_media_for_message(client, msg, channel)
-                except Exception as exception:
-                    logger.write(f"[WARN] TG media download failed for {channel}/{msg.id}: {exception}")
+                if media_keep:
+                    try:
+                        await download_tg_media_for_message(client, msg, channel, max_bytes)
+                    except Exception as exception:
+                        logger.write(f"[WARN] TG media download failed for {channel}/{msg.id}: {exception}")
 
     except FloodWaitError as error:
         wait_s = int(getattr(error, "seconds", TG_SLEEP_ON_FLOOD) or TG_SLEEP_ON_FLOOD)

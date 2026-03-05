@@ -1,9 +1,12 @@
 import os
+import io
 import json
 import re
+import zipfile
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from collections import deque, defaultdict
 
 from src.db.db import SessionLocal
@@ -16,12 +19,14 @@ from src.db.models.key_word import KeyWord
 from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
+from src.db.models.article_social_stat import ArticleSocialStat
 from src.db.models.settings import Settings
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete, and_, or_
 from sqlalchemy.exc import IntegrityError
 
 from src.utils.slugifier import slugify_code
-from src.utils.analyzer import analyze_article_words
+from src.utils.analyzer import analyze_article_words, analyze_all_articles
+from src.utils.settings import get_setting_options as get_setting_options_meta, get_all_setting_codes, validate_setting_value
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -35,6 +40,23 @@ from src.assistant.tg_auth import start_qr_sync, status_sync, submit_password_sy
 from src.assistant.auth import register_auth_endpoints
 
 MEDIA_DIR = os.path.abspath(os.getenv("MEDIA_DIR", "./media"))
+
+_recompute_lock = threading.Lock()
+
+def _enqueue_words_recompute():
+    if _recompute_lock.locked():
+        return
+
+    def _worker():
+        try:
+            with _recompute_lock:
+                with SessionLocal() as session:
+                    analyze_all_articles(session)
+        except Exception as exception:
+            print(f"[ERROR] words recompute failed: {exception}")
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
 
 def _safe_join(base: str, *parts: str) -> Path:
     base_path = Path(base).resolve()
@@ -116,9 +138,13 @@ class ParserError(ApiError):
     status: int = 502
     code: str = "parser_error"
 
+
+READ_TIMEOUT_SEC = int(os.getenv("READ_TIMEOUT_SEC", "15"))
+
 # -------- Rate Limiting --------
 RATE_LIMIT = int(os.getenv("RATE_LIMIT", "60"))         # запросов
 RATE_WINDOW = int(os.getenv("RATE_WINDOW", "60"))       # секунд
+
 # очередь временных меток на каждый key (ip)
 _rate_buckets = defaultdict(lambda: deque())
 
@@ -148,13 +174,18 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ("DELETE", re.compile(r"^/api/sources/(\d+)$"),   "delete_source"),
             # articles
             ("GET",  re.compile(r"^/api/articles$"),          "list_articles"),
+            ("GET",  re.compile(r"^/api/articles/export$"),   "export_articles"),
             ("GET",  re.compile(r"^/api/articles/(\d+)$"),    "get_article"),
             ("GET", re.compile(r"^/api/articles/(\d+)/media$"), "get_article_media"),
             ("GET", re.compile(r"^/api/articles/(\d+)/children$"), "get_article_children"),
             ("GET", re.compile(r"^/api/articles/(\d+)/parent$"), "get_article_parent"),
+            ("GET",  re.compile(r"^/api/articles/(\d+)/social-stats$"), "get_article_social_stats"),
+            ("POST", re.compile(r"^/api/articles/cleanup$"), "cleanup_articles"),
             # settings
             ("GET", re.compile(r"^/api/settings$"), "list_settings"), # ave
             ("POST", re.compile(r"^/api/settings$"), "update_settings"), # ave
+            ("GET", re.compile(r"^/api/settings/codes$"), "list_setting_codes"),
+            ("GET", re.compile(r"^/api/settings/options$"), "get_setting_options"),
             # media (local)
             ("GET", re.compile(r"^/media/(.+)$"), "serve_media"),
             # telegram auth
@@ -190,6 +221,13 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def do_GET(self): self._dispatch("GET")
         def do_POST(self): self._dispatch("POST")
         def do_DELETE(self): self._dispatch("DELETE")
+
+        def setup(self):
+            super().setup()
+            try:
+                self.connection.settimeout(READ_TIMEOUT_SEC)
+            except Exception:
+                pass
 
         def _dispatch(self, method: str):
             ip = self.address_string()
@@ -229,6 +267,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 self.send_header("Vary", "Origin")
             else:
                 self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
             self.end_headers()
@@ -244,6 +283,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             self.send_header("Access-Control-Max-Age", "86400")
             self.end_headers()
 
+        def handle_one_request(self):
+            try:
+                return super().handle_one_request()
+            except (ConnectionResetError, BrokenPipeError):
+                return
+
         def _json_ok(self, payload, status=200):
             self._send(status, json_bytes(payload), "application/json; charset=utf-8")
 
@@ -255,7 +300,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             self._send(status, json_bytes(payload), "application/json; charset=utf-8")
 
         def log_message(self, fmt, *args):
-            print(f"[{self.command}] {self.path} - {self.address_string()}")
+            method = getattr(self, "command", "-")
+            path = getattr(self, "path", "<no-path>")
+            print(f"[{method}] {path} - {self.address_string()}")
 
         # ---- Handlers ----
         def healthz(self, match, query):
@@ -323,9 +370,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             limit = max(1, min(100, int(query.get("limit", [20])[0])))
             offset = max(0, int(query.get("offset", [0])[0]))
 
+            stop_words_filter = (query.get("stop_words", ["any"])[0] or "any").strip().lower()
+            if stop_words_filter not in {"any", "with", "without"}:
+                raise ValidationError("Invalid fields", details={
+                    "stop_words": "Use any, with, or without",
+                })
+
             date_from_raw = (query.get("date_from", [""])[0] or "").strip()
             date_to_raw = (query.get("date_to", [""])[0] or "").strip()
-            order = (query.get("order", ["desc"])[0] or "desc").lower()  # asc | desc
+            order_raw = (query.get("order", [""])[0] or "").strip().lower()
+            if order_raw in ("", None):
+                order = "desc"
+            elif order_raw in ("asc", "desc"):
+                order = order_raw
+            else:
+                raise ValidationError("Invalid fields", details={"order": "Use asc/desc"})
+            trend = (query.get("trend", ["all"])[0] or "all").strip().lower()
+            relevance_raw = (query.get("relevance", [""])[0] or "").strip().lower()
 
             raw_rubric_id = (query.get("rubric_id", [""])[0] or "").strip()
             rubric_id = None
@@ -360,10 +421,22 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             if dt_from and dt_to and dt_from > dt_to:
                 raise ValidationError("Invalid date range", details={"date_from": "must be <= date_to"})
 
+            relevance_sort = None
+            if relevance_raw == "desc":
+                relevance_sort = "desc"
+            elif relevance_raw == "asc":
+                relevance_sort = "asc"
+            elif relevance_raw not in ("", "none"):
+                raise ValidationError("Invalid fields", details={"relevance": "Use desc/asc"})
+
+            if trend not in ("all", "only", "exclude"):
+                raise ValidationError("Invalid fields", details={"trend": "Use all/only/exclude"})
+
             with SessionLocal() as session:
                 stmt = (
                     select(Article)
                     .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                    .outerjoin(ArticleSocialStat, ArticleSocialStat.entity_id == Article.id)
                 )
 
                 if source_id:
@@ -381,7 +454,32 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 if rubric_id is not None:
                     stmt = stmt.where(ArticleStat.rubric_id == rubric_id)
 
+                if stop_words_filter == "with":
+                    stmt = stmt.where(ArticleStat.stop_words_count > 0)
+                elif stop_words_filter == "without":
+                    stmt = stmt.where(
+                        or_(
+                            ArticleStat.stop_words_count <= 0,
+                            ArticleStat.entity_id.is_(None),
+                        )
+                    )
+
+                if trend == "only":
+                    stmt = stmt.where(ArticleSocialStat.is_trending.is_(True))
+                elif trend == "exclude":
+                    stmt = stmt.where(
+                        or_(
+                            ArticleSocialStat.is_trending.is_(False),
+                            ArticleSocialStat.is_trending.is_(None),
+                        )
+                    )
+
                 total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+                if relevance_sort == "asc":
+                    stmt = stmt.order_by(ArticleStat.key_words_count.asc().nulls_first())
+                elif relevance_sort == "desc":
+                    stmt = stmt.order_by(ArticleStat.key_words_count.desc().nulls_last())
 
                 if order == "asc":
                     stmt = stmt.order_by(
@@ -429,6 +527,233 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "parent_article_id": article.parent_article_id
                 })
 
+        def export_articles(self, match, query):
+            from openpyxl import Workbook
+
+            def _format_dt(value: datetime | None) -> str:
+                if not value:
+                    return ""
+                dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+                stamp = dt.isoformat(timespec="seconds")
+                return stamp[:-6] + "Z" if stamp.endswith("+00:00") else stamp
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H-%M-%S")
+            excel_name = f"statistics {timestamp}.xlsx"
+            media_dir_name = f"media {timestamp}"
+
+            with SessionLocal() as session:
+                rows = session.execute(
+                    select(Article, Source, ArticleStat, Rubric.title, ArticleSocialStat)
+                    .join(Source, Source.id == Article.source_id)
+                    .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                    .outerjoin(Rubric, Rubric.id == ArticleStat.rubric_id)
+                    .outerjoin(ArticleSocialStat, ArticleSocialStat.entity_id == Article.id)
+                    .order_by(Article.id.asc())
+                ).all()
+
+                stop_rows = session.execute(
+                    select(ArticleStopWord.entity_id, StopWord.value)
+                    .join(StopWord, StopWord.id == ArticleStopWord.stop_word_id)
+                    .order_by(ArticleStopWord.entity_id.asc(), StopWord.id.asc())
+                ).all()
+
+                key_rows = session.execute(
+                    select(ArticleKeyWord.entity_id, KeyWord.value)
+                    .join(KeyWord, KeyWord.id == ArticleKeyWord.key_word_id)
+                    .order_by(ArticleKeyWord.entity_id.asc(), KeyWord.id.asc())
+                ).all()
+
+            stop_map: dict[int, list[str]] = defaultdict(list)
+            for entity_id, value in stop_rows:
+                if value:
+                    stop_map[int(entity_id)].append(value)
+
+            key_map: dict[int, list[str]] = defaultdict(list)
+            for entity_id, value in key_rows:
+                if value:
+                    key_map[int(entity_id)].append(value)
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "statistics"
+            sheet.append([
+                "id",
+                "Заголовок",
+                "Ссылка на новость",
+                "Ссылка на источник",
+                "Рубрика",
+                "Просмотры",
+                "Стоп-слова",
+                "Список стоп-слов",
+                "Ключевые слова",
+                "Список ключевых слов",
+                "Дата публикации",
+                "Дата добавления в систему",
+            ])
+
+            placeholder = "Нет данных"
+            total = 0
+
+            for article, source, stats, rubric_title, social_stats in rows:
+                total += 1
+
+                stop_list = stop_map.get(article.id, [])
+                key_list = key_map.get(article.id, [])
+
+                stop_count = placeholder if not stats else stats.stop_words_count
+                key_count = placeholder if not stats else stats.key_words_count
+                rubric_value = rubric_title or placeholder
+                viewings_value = placeholder if not social_stats else social_stats.view_count
+
+                sheet.append([
+                    article.id,
+                    article.title or "",
+                    article.link or "",
+                    source.rss_url or "",
+                    rubric_value,
+                    viewings_value,
+                    stop_count,
+                    ", ".join(stop_list),
+                    key_count,
+                    ", ".join(key_list),
+                    _format_dt(article.published_at),
+                    _format_dt(article.fetched_at),
+                ])
+
+            excel_buffer = io.BytesIO()
+            workbook.save(excel_buffer)
+            excel_bytes = excel_buffer.getvalue()
+
+            def _is_image_file(path: Path) -> bool:
+                mime, _ = mimetypes.guess_type(path.name)
+                if (mime or "").startswith("image/"):
+                    return True
+                return path.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+            def _iter_article_images(article_obj: Article) -> list[Path]:
+                if not article_obj.guid:
+                    return []
+                parts = article_obj.guid.split(":", 2)
+                if len(parts) != 3:
+                    return []
+                kind, part1, part2 = parts
+                if kind == "vk":
+                    media_dir = _safe_join(MEDIA_DIR, "vk", part1, part2)
+                elif kind == "tg":
+                    media_dir = _safe_join(MEDIA_DIR, "tg", part1, part2)
+                else:
+                    return []
+                if not media_dir.exists() or not media_dir.is_dir():
+                    return []
+                images: list[Path] = []
+                for path in sorted(media_dir.iterdir()):
+                    if not path.is_file() or path.name == "media.json":
+                        continue
+                    if _is_image_file(path):
+                        images.append(path)
+                return images
+
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+                zip_file.writestr(excel_name, excel_bytes)
+                zip_file.writestr(f"{media_dir_name}/", b"")
+
+                for article, _, _, _, _ in rows:
+                    images = _iter_article_images(article)
+                    if not images:
+                        continue
+                    for image_path in images:
+                        arcname = f"{media_dir_name}/{article.id}/{image_path.name}"
+                        zip_file.write(image_path, arcname)
+
+            data = zip_buffer.getvalue()
+            archive_name = f"export {timestamp}.zip"
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{archive_name}"')
+            self.send_header("Content-Length", str(len(data)))
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin if origin != "null" else "*")
+                self.send_header("Vary", "Origin")
+            else:
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+            self.end_headers()
+            self.wfile.write(data)
+            
+        def cleanup_articles(self, match, query):
+            body = parse_json_body(self) or {}
+            date_raw = (body.get("date_to") or body.get("date") or "").strip()
+            dry_run = bool(body.get("dry_run", False))
+
+            errors = {}
+            if not date_raw:
+                errors["date_to"] = "Required"
+            if errors:
+                raise ValidationError("Invalid fields", details=errors)
+
+            def _parse_dt(val: str):
+                if not val:
+                    return None
+                if len(val) == 10 and val[4] == "-" and val[7] == "-":
+                    y, m, d = map(int, val.split("-"))
+                    base = datetime(y, m, d, tzinfo=timezone.utc)
+                    return base + timedelta(days=1) - timedelta(microseconds=1)
+                val = val.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(val)
+                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+            try:
+                dt_to = _parse_dt(date_raw)
+            except Exception:
+                raise ValidationError("Invalid date format", details={
+                    "date_to": "Use RFC3339 or YYYY-MM-DD" if date_raw else None,
+                })
+
+            if not dt_to:
+                raise ValidationError("Invalid fields", details={"date_to": "Required"})
+
+            with SessionLocal() as session:
+                total = session.scalar(select(func.count()).select_from(Article)) or 0
+
+                date_filter = or_(
+                    Article.published_at <= dt_to,
+                    and_(Article.published_at.is_(None), Article.fetched_at <= dt_to),
+                )
+
+                to_delete = session.scalar(
+                    select(func.count()).select_from(Article).where(date_filter)
+                ) or 0
+
+                remaining = max(0, total - to_delete)
+
+                if not dry_run and to_delete:
+                    id_subq = select(Article.id).where(date_filter)
+                    session.execute(
+                        delete(ArticleKeyWord).where(ArticleKeyWord.entity_id.in_(id_subq))
+                    )
+                    session.execute(
+                        delete(ArticleStopWord).where(ArticleStopWord.entity_id.in_(id_subq))
+                    )
+                    session.execute(
+                        delete(ArticleStat).where(ArticleStat.entity_id.in_(id_subq))
+                    )
+                    session.execute(
+                        delete(Article).where(Article.id.in_(id_subq))
+                    )
+                    session.commit()
+
+                self._json_ok({
+                    "date_to": dt_to,
+                    "dry_run": dry_run,
+                    "total": total,
+                    "deleted": to_delete,
+                    "remaining": remaining,
+                })
+
         def get_article_media(self, match, query):
             article_id = int(match.group(1))
             with SessionLocal() as session:
@@ -437,6 +762,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     raise NotFound("Article not found")
 
                 assets = []
+                image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
                 try:
                     if article.guid and article.guid.startswith("vk:"):
@@ -456,27 +782,14 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                                 rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
                                 file_url = f"/media/{rel}"
                                 mime, _ = mimetypes.guess_type(path.name)
-                                type = "image" if (mime or "").startswith("image/") else "file"
+                                if not (mime or "").startswith("image/") and path.suffix.lower() not in image_exts:
+                                    continue
                                 assets.append({
-                                    "type": type,
+                                    "type": "image",
                                     "file_url": file_url,
                                     "mime": mime or "application/octet-stream",
                                     "name": path.name,
                                 })
-
-                            manifest_path = found_dir / "media.json"
-                            if manifest_path.exists():
-                                try:
-                                    meta = json.loads(manifest_path.read_text(encoding="utf-8"))
-                                    for it in meta:
-                                        if it.get("type") == "video":
-                                            assets.append({
-                                                "type": "video",
-                                                "page_url": it.get("page_url"),
-                                                "embed_url": it.get("embed_url"),
-                                            })
-                                except Exception as exception:
-                                    print(f"[WARN] bad media.json for article {article_id}: {exception}")
                     elif article.guid and article.guid.startswith("tg:"):
                         _, channel, msg_id = article.guid.split(":", 2)
                         found_dir = None
@@ -489,11 +802,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                                 if path.is_file() and path.name != "media.json":
                                     rel = path.relative_to(Path(MEDIA_DIR)).as_posix()
                                     mime, _ = mimetypes.guess_type(path.name)
-                                    type = "image" if (mime or "").startswith("image/") else (
-                                        "video" if (mime or "").startswith("video/") else "file"
-                                    )
+                                    if not (mime or "").startswith("image/") and path.suffix.lower() not in image_exts:
+                                        continue
                                     assets.append({
-                                        "type": type,
+                                        "type": "image",
                                         "file_url": f"/media/{rel}",
                                         "mime": mime or "application/octet-stream",
                                         "name": path.name,
@@ -606,19 +918,21 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 errors["value"] = "Required"
             if errors:
                 raise ValidationError("Invalid fields", details=errors)
+
+            normalized_value, err = validate_setting_value(code, value)
+            if err:
+                raise ValidationError("Invalid fields", details=err)
             
             with SessionLocal() as session:
                 stmt = session.execute(
                     select(Settings).where(Settings.code == code)
                 ).scalar_one_or_none()
 
-                if stmt:
-                    stmt.value = str(value)
-                    status = 200
-                else:
-                    stmt = Settings(code=code, value=value)
-                    session.add(stmt)
-                    status = 201
+                if not stmt:
+                    raise NotFound("Setting code not found")
+
+                stmt.value = normalized_value
+                status = 200
                 
                 session.commit()
                 session.refresh(stmt)
@@ -630,6 +944,24 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 }
 
                 self._json_ok(res, status=status)
+
+        def list_setting_codes(self, match, query):
+            self._json_ok({"codes": get_all_setting_codes()})
+
+        def get_setting_options(self, match, query):
+            code = (query.get("code", [""])[0] or "").strip()
+            if code:
+                options = get_setting_options_meta(code)
+                if not options:
+                    raise NotFound("Setting code not found")
+                return self._json_ok(options)
+
+            items = []
+            for c in get_all_setting_codes():
+                opt = get_setting_options_meta(c)
+                if opt:
+                    items.append(opt)
+            self._json_ok({"items": items})
 
         # Media (Local)
         def serve_media(self, match, query):
@@ -745,6 +1077,63 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     "key_words_count": stats.key_words_count,
                     "rubric_id": stats.rubric_id,
                     "stop_category_id": stats.stop_category_id,
+                })
+
+        def get_article_social_stats(self, match, query):
+            article_id = int(match.group(1))
+            with SessionLocal() as session:
+                row = session.execute(
+                    select(Article, Source)
+                    .join(Source, Source.id == Article.source_id)
+                    .where(Article.id == article_id)
+                ).first()
+                if not row:
+                    raise NotFound("Article not found")
+
+                article, source = row
+                if source.type not in ("vk", "tg"):
+                    self._json_ok({
+                        "id": article_id,
+                        "has_social_stats": False,
+                        "source_type": source.type,
+                        "reason": "not_social_source",
+                    })
+                    return
+
+                if source.type == "tg" and article.parent_article_id is not None:
+                    self._json_ok({
+                        "id": article_id,
+                        "has_social_stats": False,
+                        "source_type": source.type,
+                        "reason": "child_post",
+                    })
+                    return
+
+                stats = session.get(ArticleSocialStat, article_id)
+                if not stats:
+                    self._json_ok({
+                        "id": article_id,
+                        "has_social_stats": True,
+                        "source_type": source.type,
+                        "stats": None,
+                    })
+                    return
+
+                self._json_ok({
+                    "id": article_id,
+                    "has_social_stats": True,
+                    "source_type": source.type,
+                    "stats": {
+                        "like_count": stats.like_count,
+                        "repost_count": stats.repost_count,
+                        "comment_count": stats.comment_count,
+                        "view_count": stats.view_count,
+                        "engagement_score": stats.engagement_score,
+                        "previous_engagement": stats.previous_engagement,
+                        "engagement_delta": stats.engagement_delta,
+                        "is_trending": stats.is_trending,
+                        "collected_at": stats.collected_at,
+                    },
                 })
 
         def get_article_stop_words(self, match, query):
@@ -868,6 +1257,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj.code = code
                     obj.rubric_id = rubric_id
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -885,6 +1275,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj = KeyWord(value=value, code=code, rubric_id=rubric_id)
                     session.add(obj)
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -899,8 +1290,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 obj = session.get(KeyWord, word_id)
                 if not obj:
                     raise NotFound("Key word not found")
+                session.execute(
+                    delete(ArticleKeyWord).where(ArticleKeyWord.key_word_id == word_id)
+                )
                 session.delete(obj)
                 session.commit()
+                _enqueue_words_recompute()
                 self._json_ok({"status": "deleted", "id": word_id})
 
 
@@ -971,6 +1366,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj.code = code
                     obj.category_id = category_id
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -988,6 +1384,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     obj = StopWord(value=value, code=code, category_id=category_id)
                     session.add(obj)
                     session.commit()
+                    _enqueue_words_recompute()
                     session.refresh(obj)
                     self._json_ok({
                         "id": obj.id,
@@ -1002,8 +1399,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 obj = session.get(StopWord, word_id)
                 if not obj:
                     raise NotFound("Stop word not found")
+                session.execute(
+                    delete(ArticleStopWord).where(ArticleStopWord.stop_word_id == word_id)
+                )
                 session.delete(obj)
                 session.commit()
+                _enqueue_words_recompute()
                 self._json_ok({"status": "deleted", "id": word_id})
 
         # rubrics
@@ -1071,6 +1472,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def delete_rubric(self, match, query):
             rubric_id = int(match.group(1))
             with SessionLocal() as session:
+                key_word_ids = session.execute(
+                    select(KeyWord.id).where(KeyWord.rubric_id == rubric_id)
+                ).scalars().all()
+
+                if key_word_ids:
+                    session.execute(
+                        delete(ArticleKeyWord).where(ArticleKeyWord.key_word_id.in_(key_word_ids))
+                    )
+                    session.execute(
+                        delete(KeyWord).where(KeyWord.id.in_(key_word_ids))
+                    )
+
+                session.execute(
+                    ArticleStat.__table__.update()
+                    .where(ArticleStat.rubric_id == rubric_id)
+                    .values(rubric_id=None)
+                )
                 obj = session.get(Rubric, rubric_id)
                 if not obj:
                     raise NotFound("Rubric not found")
@@ -1145,6 +1563,23 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def delete_stop_category(self, match, query):
             cat_id = int(match.group(1))
             with SessionLocal() as session:
+                stop_word_ids = session.execute(
+                    select(StopWord.id).where(StopWord.category_id == cat_id)
+                ).scalars().all()
+
+                if stop_word_ids:
+                    session.execute(
+                        delete(ArticleStopWord).where(ArticleStopWord.stop_word_id.in_(stop_word_ids))
+                    )
+                    session.execute(
+                        delete(StopWord).where(StopWord.id.in_(stop_word_ids))
+                    )
+
+                session.execute(
+                    ArticleStat.__table__.update()
+                    .where(ArticleStat.stop_category_id == cat_id)
+                    .values(stop_category_id=None)
+                )
                 obj = session.get(StopCategory, cat_id)
                 if not obj:
                     raise NotFound("Stop category not found")

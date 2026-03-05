@@ -329,11 +329,6 @@ def auth_register_status(self, match, query):
 
 
 def _make_session(self, db, user: User, remember_me: bool, ip: str | None, ua: str | None):
-    if user.current_session_id:
-        old = db.get(DbSession, user.current_session_id)
-        if old and old.revoked_at is None:
-            old.revoked_at = _now_utc()
-
     now = _now_utc()
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -351,7 +346,6 @@ def _make_session(self, db, user: User, remember_me: bool, ip: str | None, ua: s
     )
     db.add(session)
     db.flush()
-    user.current_session_id = session.id
     db.commit()
     return token, session
 
@@ -416,9 +410,6 @@ def auth_logout(self, match, query):
             return self._json_ok({"status": "already_revoked"})
 
         session.revoked_at = _now_utc()
-        user = db.get(User, session.user_id)
-        if user and user.current_session_id == session.id:
-            user.current_session_id = None
         db.commit()
 
         return self._json_ok({"status": "revoked"})
@@ -440,8 +431,6 @@ def auth_whoami(self, match, query):
         user = db.get(User, session.user_id)
         if not user:
             return self._json_error(401, "unauthorized", "Invalid session")
-        if user.current_session_id != session.id:
-            return self._json_error(409, "conflict", "Session mismatch")
 
         session.last_seen_at = now
         if ROLLING_TTL_ON_TOUCH:
@@ -558,11 +547,11 @@ def auth_password_reset(self, match, query):
             return self._json_error(400, "bad_request", "Invalid code")
 
         user.password_hash = _hash_password(new_password)
-        if user.current_session_id:
-            sess = db.get(DbSession, user.current_session_id)
-            if sess and sess.revoked_at is None:
-                sess.revoked_at = now
-            user.current_session_id = None
+        active_sessions = db.execute(
+            select(DbSession).where(DbSession.user_id == user.id, DbSession.revoked_at.is_(None))
+        ).scalars().all()
+        for sess in active_sessions:
+            sess.revoked_at = now
 
         db.delete(ac)
         db.commit()
@@ -616,9 +605,6 @@ def _auth_guard(self, handler_name: str):
         user = db.get(User, session.user_id)
         if not user or not user.is_active:
             raise ApiError("Unauthorized", status=401, code="unauthorized")
-
-        if user.current_session_id and user.current_session_id != session.id:
-            raise ApiError("Conflict", status=409, code="conflict")
 
         self.auth_user = user
         self.auth_session = session
