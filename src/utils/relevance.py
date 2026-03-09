@@ -9,14 +9,14 @@ import heapq
 
 #Sentence Transformers ML model
 
+st = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+
 def smlrty(a, b):
     if np.linalg.norm(a) * np.linalg.norm(b) != 0:
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
     return 0
 
 def ml_relevance(text, kwords):
-
-    st = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 
     #sentence transformers
     st_text = st.encode(text)
@@ -64,12 +64,8 @@ def Relevance(text, kwords):
     ml_scrs = ml_relevance(text, kwords)
     tfidf_scrs = tfidf_relevance(text, kwords)
 
-    if all([el < 0.3 for el in ml_scrs]):
+    if all([el <= 0.45 for el in ml_scrs]):
 
         return tfidf_scrs
-
-    if all([el < 0.3 for el in tfidf_scrs]):
-
-        return ml_scrs
-
-    return [ 0.5*(ml_scrs[i] + tfidf_scrs[i]) for i in range(len(kwords)) ]
+        
+    return ml_scrs

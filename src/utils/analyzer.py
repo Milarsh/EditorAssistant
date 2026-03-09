@@ -94,18 +94,25 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
     )
 
     kwords = session.execute(select(KeyWord)).scalars().all()
-    key_texts = [w.value for w in kwords]
-    active_key_ids = {w.id for w in kwords}
+    kitems = [[w.id, w.value, w.rubric_id] for w in key_words]
+    key_texts = [kit[1] for kit in kitems]
 
     key_counts_by_id = {}
     rubric_counts = defaultdict(int)
 
-    rel = Relevance(full_text, key_texts)  # in [0;1]
+    rel = Relevance(full_text, kwords) # in [0;1]
 
+    flag_kws = 0
     for idx, kword in enumerate(kwords):
-        if rel[idx] > 0.3:
-            key_counts_by_id[kword.id] = rel[idx]
-            rubric_counts[kword.rubric_id] += 1
+            if rel[idx] > 0.45:
+                key_counts_by_id[kword.id] = rel[idx]
+                rubric_counts[kword.rubric_id] += 1
+                flag_kws = 1
+    if not flag_kws:
+        idx = np.argmax(rel)
+        kword = kwords[idx]
+        key_counts_by_id[kword.id] = rel[idx]
+        rubric_counts[kword.rubric_id] += 1
     
     session.execute(
         delete(ArticleStopWord).where(ArticleStopWord.entity_id == article.id)
@@ -120,19 +127,11 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
                 ArticleStopWord(entity_id=article.id, stop_word_id=stop_id)
             )
 
-    inserted_key_ids = []
     for key_id, count in key_counts_by_id.items():
-        if count <= 0:
-            continue
-        if key_id not in active_key_ids:
-            continue
-        if session.get(KeyWord, key_id) is None:
-            continue
-
-        session.add(
-            ArticleKeyWord(entity_id=article.id, key_word_id=key_id)
-        )
-        inserted_key_ids.append(key_id)
+        if count > 0:
+            session.add(
+                ArticleKeyWord(entity_id=article.id, key_word_id=key_id)
+            )
 
     rubric_id = None
     if rubric_counts:
@@ -152,21 +151,10 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         session.add(stats)
 
     stats.stop_words_count = int(stop_total)
-    stats.key_words_count = len(inserted_key_ids)
+    stats.key_words_count = int(key_counts_by_id)
     stats.rubric_id = rubric_id
     stats.stop_category_id = stop_category_id
 
     session.commit()
     session.refresh(stats)
     return stats
-
-
-def analyze_all_articles(session) -> int:
-    article_ids = session.execute(
-        select(Article.id).order_by(Article.id.asc())
-    ).scalars().all()
-    total = 0
-    for article_id in article_ids:
-        analyze_article_words(session, int(article_id))
-        total += 1
-    return total
