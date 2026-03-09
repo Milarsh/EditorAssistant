@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PasswordHashInvalidError
 
 from pathlib import Path
@@ -65,10 +66,16 @@ class TelegramAuthManager:
             raise RuntimeError("API_ID/API_HASH are not set")
         Path(os.path.dirname(SESSION_FILE)).mkdir(parents=True, exist_ok=True)
         if self._client is None:
+            session_str = None
+            try:
+                session_str = Path(SESSION_FILE).read_text(encoding="utf-8").strip() or None
+            except (FileNotFoundError, UnicodeDecodeError):
+                pass
             self._client = TelegramClient(
-                SESSION_FILE, API_ID, API_HASH, device_model=platform.node() + " " + platform.machine(),
-                system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
-                lang_code="ru"
+                StringSession(session_str), API_ID, API_HASH,
+                device_model=platform.node() + " " + platform.machine(),
+                system_version=platform.system() + " " + platform.release(),
+                app_version="1.0.0", system_lang_code="ru-RU", lang_code="ru"
             )
         if not self._client.is_connected():
             await self._client.connect()
@@ -90,7 +97,8 @@ class TelegramAuthManager:
     def _persist_session(self):
         try:
             if self._client and self._client.session:
-                self._client.session.save()
+                session_str = self._client.session.save()
+                Path(SESSION_FILE).write_text(session_str, encoding="utf-8")
         except Exception:
             pass
 
