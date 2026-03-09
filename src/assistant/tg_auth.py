@@ -210,11 +210,21 @@ class TelegramAuthManager:
     async def logout(self) -> AuthState:
         async with self._lock:
             try:
-                if self._client is not None:
-                    if not self._client.is_connected():
-                        await self._client.connect()
-                    await self._client.log_out()
-                    self._persist_session()
+                client = await self._ensure_client()
+                if not client.is_connected():
+                    await client.connect()
+                try:
+                    await client.log_out()
+                finally:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                    self._client = None
+                    try:
+                        Path(SESSION_FILE).unlink(missing_ok=True)
+                    except Exception:
+                        pass
             except Exception:
                 pass
             if self._qr_task and not self._qr_task.done():
