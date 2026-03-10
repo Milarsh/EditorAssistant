@@ -61,6 +61,20 @@ class TelegramAuthManager:
         self._state = AuthState()
         self._lock = asyncio.Lock()
 
+    async def _disconnect_client(self):
+        if self._client:
+            try:
+                await self._client.disconnect()
+                try:
+                    await asyncio.wait_for(self._client.disconnected, timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
+                await asyncio.sleep(0)
+            except Exception:
+                pass
+            finally:
+                self._client = None
+
     async def _ensure_client(self) -> TelegramClient:
         if not API_ID or not API_HASH:
             raise RuntimeError("API_ID/API_HASH are not set")
@@ -102,32 +116,39 @@ class TelegramAuthManager:
         except Exception:
             pass
 
-    async def _watch_qr(self):
+    async def _watch_qr(self, qr_login):
+        current_task = asyncio.current_task()
         try:
-            await self._qr_login.wait()
+            await qr_login.wait()
             self._persist_session()
             self._state = AuthState(status="authorized", user=await self._authorized_user())
-            try:
-                if self._client:
-                    await self._client.disconnect()
-                    try:
-                        await asyncio.wait_for(self._client.disconnected, timeout=2.0)
-                    except asyncio.TimeoutError:
-                        pass
-                    await asyncio.sleep(0)
-            except Exception:
-                pass
-            self._client = None
+            await self._disconnect_client()
         except SessionPasswordNeededError:
-            self._state = AuthState(status="password_required")
+            if self._qr_login is qr_login:
+                self._state = AuthState(status="password_required")
+        except asyncio.CancelledError:
+            raise
         except Exception as exception:
-            self._state = AuthState(status="error", error=str(exception))
+            if self._qr_login is qr_login:
+                self._state = AuthState(status="error", error=str(exception))
         finally:
-            self._qr_login = None
-            self._qr_task = None
+            if self._qr_login is qr_login:
+                self._qr_login = None
+            if self._qr_task is current_task:
+                self._qr_task = None
 
     async def status(self) -> AuthState:
         async with self._lock:
+            now = datetime.now(timezone.utc)
+            if self._state.status == "pending" and self._state.expires_at and now >= self._state.expires_at:
+                if self._qr_task and not self._qr_task.done():
+                    self._qr_task.cancel()
+                self._qr_task = None
+                self._qr_login = None
+                await self._disconnect_client()
+                self._state = AuthState(status="expired")
+                return self._state
+
             if self._state.status in {"authorized", "pending", "password_required", "expired"}:
                 return self._state
             try:
@@ -135,25 +156,7 @@ class TelegramAuthManager:
                 if await client.is_user_authorized():
                     self._persist_session()
                     self._state = AuthState(status="authorized", user=await self._authorized_user())
-                    try:
-                        await client.disconnect()
-                        try:
-                            await asyncio.wait_for(client.disconnected, timeout=2.0)
-                        except asyncio.TimeoutError:
-                            pass
-                        await asyncio.sleep(0)
-                    except Exception:
-                        pass
-                    self._client = None
-                    return self._state
-
-                now = datetime.now(timezone.utc)
-                if self._state.status == "pending" and self._state.expires_at and now >= self._state.expires_at:
-                    if self._qr_task and not self._qr_task.done():
-                        self._qr_task.cancel()
-                    self._qr_task = None
-                    self._qr_login = None
-                    self._state = AuthState(status="expired")
+                    await self._disconnect_client()
                     return self._state
 
                 if self._state.status in {"pending", "password_required"}:
@@ -193,7 +196,7 @@ class TelegramAuthManager:
             )
             if self._qr_task and not self._qr_task.done():
                 self._qr_task.cancel()
-            self._qr_task = asyncio.create_task(self._watch_qr())
+            self._qr_task = asyncio.create_task(self._watch_qr(self._qr_login))
             return self._state
 
     async def submit_password(self, password: str) -> AuthState:
@@ -224,11 +227,7 @@ class TelegramAuthManager:
                 try:
                     await client.log_out()
                 finally:
-                    try:
-                        await client.disconnect()
-                    except Exception:
-                        pass
-                    self._client = None
+                    await self._disconnect_client()
                     try:
                         Path(SESSION_FILE).unlink(missing_ok=True)
                     except Exception:
