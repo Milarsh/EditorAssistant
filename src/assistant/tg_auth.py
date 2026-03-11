@@ -3,7 +3,7 @@ import asyncio
 import platform
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from telethon import TelegramClient
@@ -16,7 +16,6 @@ API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_FILE = "./secrets/" + os.getenv("TG_SESSION", "telegram.session")
 
-QR_TIMEOUT_SECONDS = int(os.getenv("TG_QR_TIMEOUT", "120"))
 SUBMIT_TIMEOUT = float(os.getenv("TG_AUTH_SUBMIT_TIMEOUT", "10"))
 
 
@@ -181,13 +180,12 @@ class TelegramAuthManager:
                 self._state = AuthState(status="authorized", user=await self._authorized_user())
                 return self._state
 
-            now = datetime.now(timezone.utc)
             if (
                     not force
                     and self._qr_login is not None
                     and self._state.status == "pending"
                     and self._state.expires_at
-                    and now < self._state.expires_at
+                    and datetime.now(timezone.utc) < self._state.expires_at
                     and self._state.qr_url
             ):
                 return self._state
@@ -196,7 +194,7 @@ class TelegramAuthManager:
             self._state = AuthState(
                 status="pending",
                 qr_url=self._qr_login.url,
-                expires_at=now + timedelta(seconds=QR_TIMEOUT_SECONDS),
+                expires_at=self._qr_login.expires,
             )
             if self._qr_task and not self._qr_task.done():
                 self._qr_task.cancel()
