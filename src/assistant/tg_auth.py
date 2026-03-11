@@ -125,11 +125,16 @@ class TelegramAuthManager:
         except SessionPasswordNeededError:
             if self._qr_login is qr_login:
                 self._state = AuthState(status="password_required")
+        except asyncio.TimeoutError:
+            if self._qr_login is qr_login:
+                await self._disconnect_client()
+                self._state = AuthState(status="expired")
         except asyncio.CancelledError:
             raise
         except Exception as exception:
             if self._qr_login is qr_login:
-                self._state = AuthState(status="error", error=str(exception))
+                message = str(exception) or exception.__class__.__name__
+                self._state = AuthState(status="error", error=message)
         finally:
             if self._qr_login is qr_login:
                 self._qr_login = None
