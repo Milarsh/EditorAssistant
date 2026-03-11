@@ -19,9 +19,9 @@ from src.db.social_stats import (
 
 from pathlib import Path
 import json
-import sqlite3
 
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, RPCError
 from telethon.tl.types import Message
 
@@ -70,36 +70,23 @@ async def _ensure_client():
     if not API_ID or not API_HASH:
         raise RuntimeError("API_ID/API_HASH are not set")
     Path(os.path.dirname(SESSION_FILE)).mkdir(parents=True, exist_ok=True)
+    session_str = None
+    try:
+        session_str = Path(SESSION_FILE).read_text(encoding="utf-8").strip() or None
+    except (FileNotFoundError, UnicodeDecodeError):
+        pass
 
-    retries = 10
-    backoff = 1
-
-    last_error = None
-    for i in range(retries):
-        try:
-            client = TelegramClient(
-                SESSION_FILE, API_ID, API_HASH, device_model=platform.node() + " " + platform.machine(),
-                system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
-                lang_code="ru"
-            )
-            await client.connect()
-            if not await client.is_user_authorized():
-                await client.disconnect()
-                return None
-            return client
-        except sqlite3.OperationalError as error:
-            msg = str(error).lower()
-            if "database is locked" in msg:
-                delay = backoff *  i
-                await asyncio.sleep(delay)
-                last_error = error
-                continue
-            raise
-        except Exception as exception:
-            last_error = exception
-            break
-    if last_error:
-        raise last_error
+    client = TelegramClient(
+        StringSession(session_str), API_ID, API_HASH,
+        device_model=platform.node() + " " + platform.machine(),
+        system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
+        lang_code="ru"
+    )
+    await client.connect()
+    if not await client.is_user_authorized():
+        await client.disconnect()
+        return None
+    return client
 
 def _ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)

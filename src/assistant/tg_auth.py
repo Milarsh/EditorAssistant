@@ -149,8 +149,6 @@ class TelegramAuthManager:
                 self._state = AuthState(status="expired")
                 return self._state
 
-            if self._state.status in {"authorized", "pending", "password_required", "expired"}:
-                return self._state
             try:
                 client = await self._ensure_client()
                 if await client.is_user_authorized():
@@ -162,11 +160,17 @@ class TelegramAuthManager:
                 if self._state.status in {"pending", "password_required"}:
                     return self._state
 
+                await self._disconnect_client()
+
+                if self._state.status == "expired":
+                    return self._state
+
                 if self._state.status not in {"expired", "error"}:
                     self._state = AuthState(status="unauthorized")
                 return self._state
             except Exception as exception:
-                self._state = AuthState(status="error", error=str(exception))
+                message = str(exception) or exception.__class__.__name__
+                self._state = AuthState(status="error", error=message)
                 return self._state
 
     async def start_qr(self, force: bool = False) -> AuthState:
@@ -201,6 +205,10 @@ class TelegramAuthManager:
 
     async def submit_password(self, password: str) -> AuthState:
         async with self._lock:
+            if self._state.status != "password_required":
+                self._state = AuthState(status="unauthorized", error="2fa_not_requested")
+                return self._state
+
             client = await self._ensure_client()
             try:
                 await client.sign_in(password=password)
@@ -215,7 +223,8 @@ class TelegramAuthManager:
                 self._state = AuthState(status="password_required", error="bad_password")
                 return self._state
             except Exception as exception:
-                self._state = AuthState(status="error", error=str(exception))
+                message = str(exception) or exception.__class__.__name__
+                self._state = AuthState(status="error", error=message)
                 return self._state
 
     async def logout(self) -> AuthState:
