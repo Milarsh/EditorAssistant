@@ -28,6 +28,7 @@ from telethon.tl.types import Message
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_FILE = "./secrets/" + os.getenv("TG_SESSION", "telegram.session")
+AUTH_STATE_FILE = "./secrets/tg_auth_state.json"
 TG_FETCH_LIMIT = int(os.getenv("TG_FETCH_LIMIT", "100"))
 TG_SLEEP_ON_FLOOD = int(os.getenv("TG_SLEEP_ON_FLOOD", "60"))
 WINDOW_SEC = int(os.getenv("WINDOW_SEC", "10"))
@@ -65,6 +66,13 @@ def _tg_counts_from_msg(msg: Message) -> tuple[int, int, int, int]:
     comments = int(getattr(replies, "replies", 0) or 0) if replies is not None else 0
     views = int(getattr(msg, "views", 0) or 0)
     return reactions, reposts, comments, views
+
+def _is_auth_flow_active() -> bool:
+    try:
+        data = json.loads(Path(AUTH_STATE_FILE).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return data.get("status") in {"pending", "password_required"}
 
 async def _ensure_client():
     if not API_ID or not API_HASH:
@@ -339,6 +347,10 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
     return added
 
 async def _run_tg_cycle_async(logger) -> int:
+    if _is_auth_flow_active():
+        logger.write("[INFO] TG parser skipped: auth flow active")
+        return 0
+
     client = await _ensure_client()
     if client is None:
         logger.write("[INFO] TG parser skipped: not authorized")
