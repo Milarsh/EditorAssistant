@@ -251,6 +251,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                             return self._json_error(error.status, error.code, str(error), error.details)
                         except IntegrityError as error:
                             return self._json_error(409, "conflict", "Database constraint violation", {"detail": str(error.orig)})
+                        except TimeoutError as error:
+                            print(f"[TIMEOUT] {method} {path}: {error}")
+                            return self._json_error(504, "gateway_timeout", "Telegram authorization timed out")
                         except Exception as error:
                             print(f"[ERROR] {method} {path}: {error}")
                             return self._json_error(500, "internal_error", "Internal server error")
