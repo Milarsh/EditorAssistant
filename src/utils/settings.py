@@ -4,6 +4,7 @@ from src.db.models.settings import Settings
 
 SETTINGS_SCHEMA = {
     "poll_interval": {
+        "title": "Интервал опроса источников",
         "type": "int",
         "default": 5,
         "options": [5, 10, 15, 30, 45, 60],
@@ -12,11 +13,13 @@ SETTINGS_SCHEMA = {
         "max": 60,
     },
     "media_keep": {
+        "title": "Сохранять медиафайлы",
         "type": "bool",
         "default": True,
         "options": [True, False],
     },
     "media_max_size_mb": {
+        "title": "Максимальный размер медиа",
         "type": "int",
         "default": 50,
         "options": [5, 10, 25, 50, 100, 0],
@@ -26,12 +29,20 @@ SETTINGS_SCHEMA = {
         "zero_is_unlimited": True,
     },
     "social_stats_interval": {
+        "title": "Интервал сбора соцстатистики",
         "type": "int",
         "default": 60,
         "options": [10, 15, 30, 60, 120, 240],
         "allow_custom": True,
         "min": 5,
         "max": 1440,
+    },
+    "use_ml_news_analysis": {
+        "title": "Использование нейросети для анализа новостей",
+        "description": "Если включено, ключевые слова и рубрика определяются через ML-модель. Если выключено, используется старый алгоритм на основе лемматизации и подсчета вхождений.",
+        "type": "bool",
+        "default": False,
+        "options": [True, False],
     },
 }
 
@@ -88,6 +99,8 @@ def get_setting_options(code: str) -> dict | None:
 
     res = {
         "code": code,
+        "title": schema.get("title"),
+        "description": schema.get("description"),
         "type": schema.get("type"),
         "default": schema.get("default"),
     }

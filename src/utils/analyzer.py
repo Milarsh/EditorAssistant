@@ -1,7 +1,6 @@
 import re
 from collections import Counter, defaultdict
 
-import numpy as np
 import pymorphy3
 from sqlalchemy import select, delete
 
@@ -12,6 +11,7 @@ from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
 from src.utils.relevance import Relevance
+from src.utils.settings import get_setting_bool
 
 _morph = pymorphy3.MorphAnalyzer()
 
@@ -75,41 +75,20 @@ def count_words_for_items(word_items, text: str):
     return counts_by_id, total, group_counts
 
 
-def analyze_article_words(session, article_id: int) -> ArticleStat:
-    article = session.get(Article, article_id)
-    if not article:
-        raise ValueError(f"Article {article_id} not found")
+def _collect_article_text(article: Article) -> str:
+    return " ".join(part for part in (article.title, article.description) if part)
 
-    text_parts = [part for part in (article.title, article.description) if part]
-    full_text = " ".join(text_parts)
 
-    stop_words = session.execute(select(StopWord)).scalars().all()
-    stop_items = [(w.id, w.value, w.category_id) for w in stop_words]
-
-    stop_counts_by_id, stop_total, category_counts = count_words_for_items(
-        stop_items, full_text
-    )
-
-    keywords = session.execute(select(KeyWord)).scalars().all()
-    keyword_texts = [kw.value for kw in keywords]
-
-    key_counts_by_id = {}
-    rubric_counts = defaultdict(int)
-
-    relevance_scores = Relevance(full_text, keyword_texts) if keyword_texts else []
-    if relevance_scores:
-        threshold = 0.45
-        for kw, score in zip(keywords, relevance_scores):
-            if score > threshold:
-                key_counts_by_id[kw.id] = float(score)
-                rubric_counts[kw.rubric_id] += 1
-
-        if not key_counts_by_id:
-            best_idx = int(np.argmax(relevance_scores))
-            best_kw = keywords[best_idx]
-            key_counts_by_id[best_kw.id] = float(relevance_scores[best_idx])
-            rubric_counts[best_kw.rubric_id] += 1
-
+def _persist_article_analysis(
+    session,
+    article: Article,
+    stop_counts_by_id: dict,
+    stop_total: int,
+    category_counts,
+    key_counts_by_id: dict,
+    key_total: int,
+    rubric_counts,
+) -> ArticleStat:
     session.execute(
         delete(ArticleStopWord).where(ArticleStopWord.entity_id == article.id)
     )
@@ -147,7 +126,7 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         session.add(stats)
 
     stats.stop_words_count = int(stop_total)
-    stats.key_words_count = len(key_counts_by_id)
+    stats.key_words_count = int(key_total)
     stats.rubric_id = rubric_id
     stats.stop_category_id = stop_category_id
 
@@ -156,13 +135,105 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
     return stats
 
 
+def _analyze_article_words_legacy(session, article: Article) -> ArticleStat:
+    full_text = _collect_article_text(article)
+
+    stop_words = session.execute(select(StopWord)).scalars().all()
+    stop_items = [(w.id, w.value, w.category_id) for w in stop_words]
+    stop_counts_by_id, stop_total, category_counts = count_words_for_items(
+        stop_items, full_text
+    )
+
+    key_words = session.execute(select(KeyWord)).scalars().all()
+    key_items = [(w.id, w.value, w.rubric_id) for w in key_words]
+    key_counts_by_id, key_total, rubric_counts = count_words_for_items(
+        key_items, full_text
+    )
+
+    return _persist_article_analysis(
+        session,
+        article,
+        stop_counts_by_id,
+        stop_total,
+        category_counts,
+        key_counts_by_id,
+        key_total,
+        rubric_counts,
+    )
+
+
+def _analyze_article_words_ml(session, article: Article) -> ArticleStat:
+    full_text = _collect_article_text(article)
+
+    stop_words = session.execute(select(StopWord)).scalars().all()
+    stop_items = [(w.id, w.value, w.category_id) for w in stop_words]
+    stop_counts_by_id, stop_total, category_counts = count_words_for_items(
+        stop_items, full_text
+    )
+
+    keywords = session.execute(select(KeyWord)).scalars().all()
+    keyword_texts = [kw.value for kw in keywords]
+    key_counts_by_id = {}
+    rubric_counts = defaultdict(int)
+
+    relevance_scores = Relevance(full_text, keyword_texts) if keyword_texts else []
+    if relevance_scores:
+        threshold = 0.45
+        for kw, score in zip(keywords, relevance_scores):
+            if score > threshold:
+                key_counts_by_id[kw.id] = float(score)
+                rubric_counts[kw.rubric_id] += 1
+
+        if not key_counts_by_id:
+            best_idx = max(
+                range(len(relevance_scores)),
+                key=relevance_scores.__getitem__,
+            )
+            best_kw = keywords[best_idx]
+            key_counts_by_id[best_kw.id] = float(relevance_scores[best_idx])
+            rubric_counts[best_kw.rubric_id] += 1
+
+    return _persist_article_analysis(
+        session,
+        article,
+        stop_counts_by_id,
+        stop_total,
+        category_counts,
+        key_counts_by_id,
+        len(key_counts_by_id),
+        rubric_counts,
+    )
+
+
+def analyze_article_words(
+    session,
+    article_id: int,
+    use_ml_analysis: bool | None = None,
+) -> ArticleStat:
+    article = session.get(Article, article_id)
+    if not article:
+        raise ValueError(f"Article {article_id} not found")
+
+    if use_ml_analysis is None:
+        use_ml_analysis = get_setting_bool("use_ml_news_analysis", False)
+
+    if use_ml_analysis:
+        return _analyze_article_words_ml(session, article)
+    return _analyze_article_words_legacy(session, article)
+
+
 def analyze_all_articles(session) -> int:
+    use_ml_analysis = get_setting_bool("use_ml_news_analysis", False)
     processed = 0
     article_ids = session.execute(select(Article.id)).scalars().all()
 
     for article_id in article_ids:
         try:
-            analyze_article_words(session, article_id)
+            analyze_article_words(
+                session,
+                article_id,
+                use_ml_analysis=use_ml_analysis,
+            )
             processed += 1
         except Exception as exception:
             session.rollback()

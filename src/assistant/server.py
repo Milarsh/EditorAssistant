@@ -940,6 +940,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 session.commit()
                 session.refresh(stmt)
 
+                if code == "use_ml_news_analysis":
+                    _enqueue_words_recompute()
+
                 res = {
                     "id": stmt.id,
                     "code": stmt.code,
