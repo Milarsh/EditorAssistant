@@ -86,7 +86,10 @@ def main():
     logger.write("[PARSER] Parser started")
     while True:
         interval_minutes = max(1, get_setting_int("poll_interval", 5))
-        run_cycle()
+        try:
+            run_cycle()
+        except Exception as exception:
+            logger.write(f"[PARSER-ERROR] cycle failed: {exception}")
         time.sleep(interval_minutes * 60)
 
 if __name__ == "__main__":

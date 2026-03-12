@@ -380,4 +380,11 @@ def run_tg_cycle(logger) -> int:
         return asyncio.run(_run_tg_cycle_async(logger))
     except RuntimeError:
         loop = asyncio.get_event_loop()
-        return loop.run_until_complete(_run_tg_cycle_async(logger))
+        try:
+            return loop.run_until_complete(_run_tg_cycle_async(logger))
+        except Exception as exception:
+            logger.write(f"[ERROR] TG cycle failed: {exception}")
+            return 0
+    except Exception as exception:
+        logger.write(f"[ERROR] TG cycle failed: {exception}")
+        return 0
