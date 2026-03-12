@@ -36,11 +36,12 @@ git clone https://github.com/Milarsh/EditorAssistantFront
 cd ~/service/EditorAssistant
 cp .env.example .env
 ```
-Заполните `.env` минимум:
+Заполните `.env`:
 - Данные БД PostgreSQL (создаётся прямо в контейнере) (`POSTGRES_*`).
 - Telegram API (`API_ID`, `API_HASH`). Ключи берутся на https://my.telegram.org.
 - VK API (`VK_TOKEN`). Возьмите сервисный ключ доступа приложения на https://id.vk.com/business/go.
 - SMTP для отправки кодов (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_TLS`). Данные выдаёт ваш почтовый сервис.
+- HF Hub токен (`HF_TOKEN`) — получите персональный токен на https://huggingface.co/settings/tokens, чтобы не получать ограничение по скорости при скачивании ML-моделей (опционально).
 
 ## 4. Экранные сессии (`screen`)
 Чтобы процессы не завершались при закрытии SSH, создайте две сессии `screen` и внутри них запускайте бэкенд и фронтенд:
