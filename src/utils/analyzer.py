@@ -1,6 +1,7 @@
 import re
 from collections import Counter, defaultdict
 
+import numpy as np
 import pymorphy3
 from sqlalchemy import select, delete
 
@@ -79,11 +80,7 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
     if not article:
         raise ValueError(f"Article {article_id} not found")
 
-    text_parts = []
-    if getattr(article, "title", None):
-        text_parts.append(article.title)
-    if getattr(article, "description", None):
-        text_parts.append(article.description)
+    text_parts = [part for part in (article.title, article.description) if part]
     full_text = " ".join(text_parts)
 
     stop_words = session.execute(select(StopWord)).scalars().all()
@@ -93,27 +90,26 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         stop_items, full_text
     )
 
-    kwords = session.execute(select(KeyWord)).scalars().all()
-    kitems = [[w.id, w.value, w.rubric_id] for w in key_words]
-    key_texts = [kit[1] for kit in kitems]
+    keywords = session.execute(select(KeyWord)).scalars().all()
+    keyword_texts = [kw.value for kw in keywords]
 
     key_counts_by_id = {}
     rubric_counts = defaultdict(int)
 
-    rel = Relevance(full_text, kwords) # in [0;1]
+    relevance_scores = Relevance(full_text, keyword_texts) if keyword_texts else []
+    if relevance_scores:
+        threshold = 0.45
+        for kw, score in zip(keywords, relevance_scores):
+            if score > threshold:
+                key_counts_by_id[kw.id] = float(score)
+                rubric_counts[kw.rubric_id] += 1
 
-    flag_kws = 0
-    for idx, kword in enumerate(kwords):
-            if rel[idx] > 0.45:
-                key_counts_by_id[kword.id] = rel[idx]
-                rubric_counts[kword.rubric_id] += 1
-                flag_kws = 1
-    if not flag_kws:
-        idx = np.argmax(rel)
-        kword = kwords[idx]
-        key_counts_by_id[kword.id] = rel[idx]
-        rubric_counts[kword.rubric_id] += 1
-    
+        if not key_counts_by_id:
+            best_idx = int(np.argmax(relevance_scores))
+            best_kw = keywords[best_idx]
+            key_counts_by_id[best_kw.id] = float(relevance_scores[best_idx])
+            rubric_counts[best_kw.rubric_id] += 1
+
     session.execute(
         delete(ArticleStopWord).where(ArticleStopWord.entity_id == article.id)
     )
@@ -151,10 +147,25 @@ def analyze_article_words(session, article_id: int) -> ArticleStat:
         session.add(stats)
 
     stats.stop_words_count = int(stop_total)
-    stats.key_words_count = int(key_counts_by_id)
+    stats.key_words_count = len(key_counts_by_id)
     stats.rubric_id = rubric_id
     stats.stop_category_id = stop_category_id
 
     session.commit()
     session.refresh(stats)
     return stats
+
+
+def analyze_all_articles(session) -> int:
+    processed = 0
+    article_ids = session.execute(select(Article.id)).scalars().all()
+
+    for article_id in article_ids:
+        try:
+            analyze_article_words(session, article_id)
+            processed += 1
+        except Exception as exception:
+            session.rollback()
+            print(f"[WARN] failed to analyze article {article_id}: {exception}")
+
+    return processed
