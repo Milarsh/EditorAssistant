@@ -184,15 +184,6 @@ def _analyze_article_words_ml(session, article: Article) -> ArticleStat:
                 key_counts_by_id[kw.id] = float(score)
                 rubric_counts[kw.rubric_id] += 1
 
-        if not key_counts_by_id:
-            best_idx = max(
-                range(len(relevance_scores)),
-                key=relevance_scores.__getitem__,
-            )
-            best_kw = keywords[best_idx]
-            key_counts_by_id[best_kw.id] = float(relevance_scores[best_idx])
-            rubric_counts[best_kw.rubric_id] += 1
-
     return _persist_article_analysis(
         session,
         article,
