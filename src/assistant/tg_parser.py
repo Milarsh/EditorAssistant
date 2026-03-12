@@ -19,15 +19,16 @@ from src.db.social_stats import (
 
 from pathlib import Path
 import json
-import sqlite3
 
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, RPCError
 from telethon.tl.types import Message
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_FILE = "./secrets/" + os.getenv("TG_SESSION", "telegram.session")
+AUTH_STATE_FILE = "./secrets/tg_auth_state.json"
 TG_FETCH_LIMIT = int(os.getenv("TG_FETCH_LIMIT", "100"))
 TG_SLEEP_ON_FLOOD = int(os.getenv("TG_SLEEP_ON_FLOOD", "60"))
 WINDOW_SEC = int(os.getenv("WINDOW_SEC", "10"))
@@ -66,40 +67,34 @@ def _tg_counts_from_msg(msg: Message) -> tuple[int, int, int, int]:
     views = int(getattr(msg, "views", 0) or 0)
     return reactions, reposts, comments, views
 
+def _is_auth_flow_active() -> bool:
+    try:
+        data = json.loads(Path(AUTH_STATE_FILE).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return data.get("status") in {"pending", "password_required"}
+
 async def _ensure_client():
     if not API_ID or not API_HASH:
         raise RuntimeError("API_ID/API_HASH are not set")
     Path(os.path.dirname(SESSION_FILE)).mkdir(parents=True, exist_ok=True)
+    session_str = None
+    try:
+        session_str = Path(SESSION_FILE).read_text(encoding="utf-8").strip() or None
+    except (FileNotFoundError, UnicodeDecodeError):
+        pass
 
-    retries = 10
-    backoff = 1
-
-    last_error = None
-    for i in range(retries):
-        try:
-            client = TelegramClient(
-                SESSION_FILE, API_ID, API_HASH, device_model=platform.node() + " " + platform.machine(),
-                system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
-                lang_code="ru"
-            )
-            await client.connect()
-            if not await client.is_user_authorized():
-                await client.disconnect()
-                return None
-            return client
-        except sqlite3.OperationalError as error:
-            msg = str(error).lower()
-            if "database is locked" in msg:
-                delay = backoff *  i
-                await asyncio.sleep(delay)
-                last_error = error
-                continue
-            raise
-        except Exception as exception:
-            last_error = exception
-            break
-    if last_error:
-        raise last_error
+    client = TelegramClient(
+        StringSession(session_str), API_ID, API_HASH,
+        device_model=platform.node() + " " + platform.machine(),
+        system_version=platform.system() + " " + platform.release(), app_version="1.0.0", system_lang_code="ru-RU",
+        lang_code="ru"
+    )
+    await client.connect()
+    if not await client.is_user_authorized():
+        await client.disconnect()
+        return None
+    return client
 
 def _ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
@@ -352,6 +347,10 @@ async def _process_tg_source(client: TelegramClient, source: Source, logger) -> 
     return added
 
 async def _run_tg_cycle_async(logger) -> int:
+    if _is_auth_flow_active():
+        logger.write("[INFO] TG parser skipped: auth flow active")
+        return 0
+
     client = await _ensure_client()
     if client is None:
         logger.write("[INFO] TG parser skipped: not authorized")
@@ -381,4 +380,11 @@ def run_tg_cycle(logger) -> int:
         return asyncio.run(_run_tg_cycle_async(logger))
     except RuntimeError:
         loop = asyncio.get_event_loop()
-        return loop.run_until_complete(_run_tg_cycle_async(logger))
+        try:
+            return loop.run_until_complete(_run_tg_cycle_async(logger))
+        except Exception as exception:
+            logger.write(f"[ERROR] TG cycle failed: {exception}")
+            return 0
+    except Exception as exception:
+        logger.write(f"[ERROR] TG cycle failed: {exception}")
+        return 0
