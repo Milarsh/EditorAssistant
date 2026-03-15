@@ -11,6 +11,9 @@ import heapq
 
 st = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 
+ML_RELEVANCE_THRESHOLD = 0.6
+TFIDF_RELEVANCE_THRESHOLD = 0.1
+
 def smlrty(a, b):
     if np.linalg.norm(a) * np.linalg.norm(b) != 0:
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
@@ -59,13 +62,17 @@ def tfidf_relevance(text: str, keywords: list) -> list:
 
 # ---------------------------
 
-def Relevance(text, kwords):
+def select_relevance_scores(text, kwords):
 
     ml_scrs = ml_relevance(text, kwords)
+
+    if any(score > ML_RELEVANCE_THRESHOLD for score in ml_scrs):
+        return ml_scrs, ML_RELEVANCE_THRESHOLD
+
     tfidf_scrs = tfidf_relevance(text, kwords)
+    return tfidf_scrs, TFIDF_RELEVANCE_THRESHOLD
 
-    if all([el <= 0.45 for el in ml_scrs]):
 
-        return tfidf_scrs
-        
-    return ml_scrs
+def Relevance(text, kwords):
+    scores, _ = select_relevance_scores(text, kwords)
+    return scores

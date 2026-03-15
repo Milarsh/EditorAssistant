@@ -10,7 +10,7 @@ from src.db.models.key_word import KeyWord
 from src.db.models.article_stop_word import ArticleStopWord
 from src.db.models.article_key_word import ArticleKeyWord
 from src.db.models.article_stat import ArticleStat
-from src.utils.relevance import Relevance
+from src.utils.relevance import select_relevance_scores
 from src.utils.settings import get_setting_bool
 
 _morph = pymorphy3.MorphAnalyzer()
@@ -174,15 +174,15 @@ def _analyze_article_words_ml(session, article: Article) -> ArticleStat:
     keywords = session.execute(select(KeyWord)).scalars().all()
     keyword_texts = [kw.value for kw in keywords]
     key_counts_by_id = {}
-    rubric_counts = defaultdict(int)
+    rubric_counts = defaultdict(float)
 
-    relevance_scores = Relevance(full_text, keyword_texts) if keyword_texts else []
+    relevance_scores, threshold = select_relevance_scores(full_text, keyword_texts) if keyword_texts else ([], 0.0)
     if relevance_scores:
-        threshold = 0.45
         for kw, score in zip(keywords, relevance_scores):
             if score > threshold:
-                key_counts_by_id[kw.id] = float(score)
-                rubric_counts[kw.rubric_id] += 1
+                normalized_score = float(score)
+                key_counts_by_id[kw.id] = normalized_score
+                rubric_counts[kw.rubric_id] += normalized_score
 
     return _persist_article_analysis(
         session,
