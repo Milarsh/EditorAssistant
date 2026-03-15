@@ -460,8 +460,10 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
             with SessionLocal() as session:
                 stmt = (
-                    select(Article)
+                    select(Article, Source.name, ArticleStat.key_words_count, Rubric.title, ArticleSocialStat.is_trending)
+                    .join(Source, Source.id == Article.source_id)
                     .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
+                    .outerjoin(Rubric, Rubric.id == ArticleStat.rubric_id)
                     .outerjoin(ArticleSocialStat, ArticleSocialStat.entity_id == Article.id)
                 )
 
@@ -518,21 +520,25 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         Article.id.desc(),
                     )
 
-                rows = session.execute(stmt.limit(limit).offset(offset)).scalars().all()
+                rows = session.execute(stmt.limit(limit).offset(offset)).all()
 
                 self._json_ok({
                     "total": total, "limit": limit, "offset": offset,
                     "items": [{
-                        "id": a.id,
-                        "source_id": a.source_id,
-                        "title": a.title,
-                        "link": a.link,
-                        "description": a.description,
-                        "guid": a.guid,
-                        "published_at": a.published_at,
-                        "fetched_at": a.fetched_at,
-                        "parent_article_id": a.parent_article_id
-                    } for a in rows]
+                        "id": article.id,
+                        "source_id": article.source_id,
+                        "source_name": source_name,
+                        "title": article.title,
+                        "link": article.link,
+                        "description": article.description,
+                        "guid": article.guid,
+                        "published_at": article.published_at,
+                        "fetched_at": article.fetched_at,
+                        "parent_article_id": article.parent_article_id,
+                        "rubric_title": rubric_title,
+                        "key_words_count": key_words_count if key_words_count is not None else 0,
+                        "is_trending": bool(is_trending) if is_trending is not None else False,
+                    } for article, source_name, key_words_count, rubric_title, is_trending in rows]
                 })
 
         def get_article(self, match, query):

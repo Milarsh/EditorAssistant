@@ -146,6 +146,7 @@ paths:
                     items:
                       - id: 101
                         source_id: 2
+                        source_name: "RSS/РИА Новости"
                         title: "Новость"
                         link: "https://example.com/1"
                         description: "Текст"
@@ -153,8 +154,12 @@ paths:
                         published_at: "2025-10-28T10:05:50Z"
                         fetched_at: "2025-10-28T10:06:00Z"
                         parent_article_id: null
+                        rubric_title: "Транспорт"
+                        key_words_count: 10
+                        is_trending: true
                       - id: 102
                         source_id: 2
+                        source_name: "Telegram/Канал"
                         title: "https://t.me/channel/42"
                         link: "https://t.me/channel/42"
                         description: null
@@ -162,6 +167,9 @@ paths:
                         published_at: "2025-10-28T10:05:51Z"
                         fetched_at: "2025-10-28T10:06:10Z"
                         parent_article_id: 101
+                        rubric_title: null
+                        key_words_count: 0
+                        is_trending: false
   /api/articles/export:
     get:
       tags:
@@ -1325,6 +1333,9 @@ components:
           type: integer
         source_id:
           type: integer
+        source_name:
+          type: string
+          description: Название источника новости.
         title:
           type: string
         link:
@@ -1344,7 +1355,18 @@ components:
           description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
         parent_article_id:
           type: integer
+          nullable: true
           description: ID родительской статьи (TG)
+        rubric_title:
+          type: string
+          nullable: true
+          description: Название рубрики из статистики статьи.
+        key_words_count:
+          type: integer
+          description: Количество ключевых слов из статистики статьи.
+        is_trending:
+          type: boolean
+          description: Признак трендовости из социальной статистики статьи.
     ArticlesList:
       type: object
       required:
