@@ -6,3 +6,6 @@ telethon==1.41.*
 bcrypt==5.*
 pymorphy3==2.*
 openpyxl==3.*
+numpy==2.*
+sentence-transformers==5.*
+transformers==5.*

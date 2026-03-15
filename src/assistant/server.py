@@ -952,6 +952,9 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 session.commit()
                 session.refresh(stmt)
 
+                if code == "use_ml_news_analysis":
+                    _enqueue_words_recompute()
+
                 res = {
                     "id": stmt.id,
                     "code": stmt.code,
@@ -1081,10 +1084,13 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
         def get_article_stats(self, match, query):
             article_id = int(match.group(1))
             with SessionLocal() as session:
-                try:
-                    stats = analyze_article_words(session, article_id)
-                except ValueError:
+                article = session.get(Article, article_id)
+                if not article:
                     raise NotFound("Article not found")
+
+                stats = session.get(ArticleStat, article_id)
+                if not stats:
+                    raise NotFound("Article stats not found")
 
                 self._json_ok({
                     "entity_id": stats.entity_id,
