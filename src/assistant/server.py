@@ -1,5 +1,4 @@
 import os
-import io
 import json
 import re
 import zipfile
@@ -64,6 +63,19 @@ def _safe_join(base: str, *parts: str) -> Path:
     if not str(full).startswith(str(base_path)):
         raise ValueError("Unsafe path")
     return full
+
+
+class _StreamingWriter:
+    def __init__(self, raw):
+        self._raw = raw
+
+    def write(self, data: bytes) -> int:
+        written = self._raw.write(data)
+        self._raw.flush()
+        return written
+
+    def flush(self) -> None:
+        self._raw.flush()
 
 # -------- утилиты JSON --------
 def json_bytes(data) -> bytes:
@@ -275,6 +287,17 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_cors_headers(self):
+            origin = self.headers.get("Origin")
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin if origin != "null" else "*")
+                self.send_header("Vary", "Origin")
+            else:
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Expose-Headers", "Content-Disposition")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 
         def do_OPTIONS(self):
             origin = self.headers.get("Origin") or "*"
@@ -543,6 +566,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H-%M-%S")
             excel_name = f"statistics {timestamp}.xlsx"
             media_dir_name = f"media {timestamp}"
+            archive_name = f"export {timestamp}.zip"
 
             with SessionLocal() as session:
                 rows = session.execute(
@@ -576,9 +600,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                 if value:
                     key_map[int(entity_id)].append(value)
 
-            workbook = Workbook()
-            sheet = workbook.active
-            sheet.title = "statistics"
+            workbook = Workbook(write_only=True)
+            sheet = workbook.create_sheet(title="statistics")
             sheet.append([
                 "id",
                 "Заголовок",
@@ -595,11 +618,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
             ])
 
             placeholder = "Нет данных"
-            total = 0
 
             for article, source, stats, rubric_title, social_stats in rows:
-                total += 1
-
                 stop_list = stop_map.get(article.id, [])
                 key_list = key_map.get(article.id, [])
 
@@ -622,10 +642,6 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                     _format_dt(article.published_at),
                     _format_dt(article.fetched_at),
                 ])
-
-            excel_buffer = io.BytesIO()
-            workbook.save(excel_buffer)
-            excel_bytes = excel_buffer.getvalue()
 
             def _is_image_file(path: Path) -> bool:
                 mime, _ = mimetypes.guess_type(path.name)
@@ -656,36 +672,32 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         images.append(path)
                 return images
 
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-                zip_file.writestr(excel_name, excel_bytes)
-                zip_file.writestr(f"{media_dir_name}/", b"")
-
-                for article, _, _, _, _ in rows:
-                    images = _iter_article_images(article)
-                    if not images:
-                        continue
-                    for image_path in images:
-                        arcname = f"{media_dir_name}/{article.id}/{image_path.name}"
-                        zip_file.write(image_path, arcname)
-
-            data = zip_buffer.getvalue()
-            archive_name = f"export {timestamp}.zip"
-
+            self.close_connection = True
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{archive_name}"')
-            self.send_header("Content-Length", str(len(data)))
-            origin = self.headers.get("Origin")
-            if origin:
-                self.send_header("Access-Control-Allow-Origin", origin if origin != "null" else "*")
-                self.send_header("Vary", "Origin")
-            else:
-                self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+            self.send_header("Connection", "close")
+            self._send_cors_headers()
             self.end_headers()
-            self.wfile.write(data)
+
+            stream = _StreamingWriter(self.wfile)
+            try:
+                with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+                    with zip_file.open(excel_name, "w") as excel_entry:
+                        workbook.save(excel_entry)
+                    zip_file.writestr(f"{media_dir_name}/", b"")
+
+                    for article, _, _, _, _ in rows:
+                        images = _iter_article_images(article)
+                        if not images:
+                            continue
+                        for image_path in images:
+                            arcname = f"{media_dir_name}/{article.id}/{image_path.name}"
+                            zip_file.write(image_path, arcname)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            finally:
+                workbook.close()
             
         def cleanup_articles(self, match, query):
             body = parse_json_body(self) or {}
