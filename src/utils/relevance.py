@@ -12,7 +12,7 @@ import heapq
 st = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 
 ML_RELEVANCE_THRESHOLD = 0.6
-TFIDF_RELEVANCE_THRESHOLD = 0.1
+TFIDF_RELEVANCE_THRESHOLD = 0.075
 
 def smlrty(a, b):
     if np.linalg.norm(a) * np.linalg.norm(b) != 0:
