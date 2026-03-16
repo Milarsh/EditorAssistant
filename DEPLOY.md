@@ -38,8 +38,8 @@ cp .env.example .env
 ```
 Заполните `.env`:
 - Данные БД PostgreSQL (создаётся прямо в контейнере) (`POSTGRES_*`).
-- Telegram API (`API_ID`, `API_HASH`). Ключи берутся на https://my.telegram.org.
-- VK API (`VK_TOKEN`). Возьмите сервисный ключ доступа приложения на https://id.vk.com/business/go.
+- Telegram API (`API_ID`, `API_HASH`). Ключи берутся на https://my.telegram.org (API development tools -> Create new application (любые названия, можно без URL, Web-приложение) -> берём App api_id и App api_hash)
+- VK API (`VK_TOKEN`). Возьмите сервисный ключ доступа приложения на https://id.vk.com/business/go (Добавить приложение -> любое название, платформы: Web -> Способы быстрого входа в web-приложении пропускаем -> берём Сервисный ключ доступа).
 - SMTP для отправки кодов (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_TLS`). Данные выдаёт ваш почтовый сервис.
 - HF Hub токен (`HF_TOKEN`) — получите персональный токен на https://huggingface.co/settings/tokens, чтобы не получать ограничение по скорости при скачивании ML-моделей (опционально).
 
