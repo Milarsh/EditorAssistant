@@ -460,7 +460,14 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
 
             with SessionLocal() as session:
                 stmt = (
-                    select(Article, Source.name, ArticleStat.key_words_count, Rubric.title, ArticleSocialStat.is_trending)
+                    select(
+                        Article,
+                        Source.name,
+                        Source.type,
+                        ArticleStat.key_words_count,
+                        Rubric.title,
+                        ArticleSocialStat.is_trending,
+                    )
                     .join(Source, Source.id == Article.source_id)
                     .outerjoin(ArticleStat, ArticleStat.entity_id == Article.id)
                     .outerjoin(Rubric, Rubric.id == ArticleStat.rubric_id)
@@ -528,6 +535,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "id": article.id,
                         "source_id": article.source_id,
                         "source_name": source_name,
+                        "source_type": source_type,
                         "title": article.title,
                         "link": article.link,
                         "description": article.description,
@@ -538,7 +546,7 @@ def run_server(host: str = "0.0.0.0", port: int = 8000):
                         "rubric_title": rubric_title,
                         "key_words_count": key_words_count if key_words_count is not None else 0,
                         "is_trending": bool(is_trending) if is_trending is not None else False,
-                    } for article, source_name, key_words_count, rubric_title, is_trending in rows]
+                    } for article, source_name, source_type, key_words_count, rubric_title, is_trending in rows]
                 })
 
         def get_article(self, match, query):

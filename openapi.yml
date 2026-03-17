@@ -147,6 +147,7 @@ paths:
                       - id: 101
                         source_id: 2
                         source_name: "RSS/РИА Новости"
+                        source_type: "rss"
                         title: "Новость"
                         link: "https://example.com/1"
                         description: "Текст"
@@ -160,6 +161,7 @@ paths:
                       - id: 102
                         source_id: 2
                         source_name: "Telegram/Канал"
+                        source_type: "tg"
                         title: "https://t.me/channel/42"
                         link: "https://t.me/channel/42"
                         description: null
@@ -1384,7 +1386,64 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Article'
+            $ref: '#/components/schemas/ArticleListItem'
+    ArticleListItem:
+      type: object
+      required:
+      - id
+      - source_id
+      - source_name
+      - source_type
+      - title
+      - link
+      - guid
+      - fetched_at
+      - parent_article_id
+      - key_words_count
+      - is_trending
+      properties:
+        id:
+          type: integer
+        source_id:
+          type: integer
+        source_name:
+          type: string
+          description: Название источника новости.
+        source_type:
+          type: string
+          enum: [rss, tg, vk]
+          description: Тип источника новости.
+        title:
+          type: string
+        link:
+          type: string
+          format: uri
+        description:
+          type: string
+          nullable: true
+        guid:
+          type: string
+        published_at:
+          type: string
+          nullable: true
+          description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
+        fetched_at:
+          type: string
+          description: UTC строка "YYYY-MM-DD HH:MM:SS[.ffffff]"
+        parent_article_id:
+          type: integer
+          nullable: true
+          description: ID родительской статьи (TG)
+        rubric_title:
+          type: string
+          nullable: true
+          description: Название рубрики из статистики статьи.
+        key_words_count:
+          type: integer
+          description: Количество ключевых слов из статистики статьи.
+        is_trending:
+          type: boolean
+          description: Признак трендовости из социальной статистики статьи.
     ArticleAssetsResponse:
       type: object
       required: [id, assets]
