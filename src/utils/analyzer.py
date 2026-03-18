@@ -184,6 +184,9 @@ def _analyze_article_words_ml(session, article: Article) -> ArticleStat:
                 key_counts_by_id[kw.id] = normalized_score
                 rubric_counts[kw.rubric_id] += normalized_score
 
+    if not key_counts_by_id:
+        return _analyze_article_words_legacy(session, article)
+
     return _persist_article_analysis(
         session,
         article,
