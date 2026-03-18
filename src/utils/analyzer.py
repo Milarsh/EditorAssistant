@@ -146,9 +146,10 @@ def _analyze_article_words_legacy(session, article: Article) -> ArticleStat:
 
     key_words = session.execute(select(KeyWord)).scalars().all()
     key_items = [(w.id, w.value, w.rubric_id) for w in key_words]
-    key_counts_by_id, key_total, rubric_counts = count_words_for_items(
+    key_counts_by_id, _, rubric_counts = count_words_for_items(
         key_items, full_text
     )
+    key_total = len(key_counts_by_id)
 
     return _persist_article_analysis(
         session,
