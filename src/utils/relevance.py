@@ -1,33 +1,8 @@
-from sentence_transformers import SentenceTransformer
-from transformers import pipeline
-import numpy as np
-
 from sklearn.feature_extraction.text import TfidfVectorizer
 import pymorphy3
 import re
-import heapq
 
-#Sentence Transformers ML model
-
-st = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-
-ML_RELEVANCE_THRESHOLD = 0.6
 TFIDF_RELEVANCE_THRESHOLD = 0.075
-
-def smlrty(a, b):
-    if np.linalg.norm(a) * np.linalg.norm(b) != 0:
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-    return 0
-
-def ml_relevance(text, kwords):
-
-    #sentence transformers
-    st_text = st.encode(text)
-    st_kwords = st.encode(kwords)
-
-    scrs = [smlrty(st_text, kword) for kword in st_kwords]
-
-    return scrs
 
 # TD-IDF
 
@@ -44,13 +19,18 @@ def lemmatize_russian(text: str) -> str:
     return ' '.join(lemmatized)
 
 def tfidf_relevance(text: str, keywords: list) -> list:
+    if not text or not keywords:
+        return [] if not keywords else [0.0 for _ in keywords]
 
     processed_text = lemmatize_russian(text)
 
     processed_keywords = [lemmatize_russian(kw) for kw in keywords]
 
     vectorizer = TfidfVectorizer(ngram_range=(1, 2))
-    tfidf_matrix = vectorizer.fit_transform([processed_text])
+    try:
+        tfidf_matrix = vectorizer.fit_transform([processed_text])
+    except ValueError:
+        return [0.0 for _ in keywords]
 
     feature_names = vectorizer.get_feature_names_out()
     scores = tfidf_matrix.toarray()[0]
@@ -63,12 +43,6 @@ def tfidf_relevance(text: str, keywords: list) -> list:
 # ---------------------------
 
 def select_relevance_scores(text, kwords):
-
-    ml_scrs = ml_relevance(text, kwords)
-
-    if any(score > ML_RELEVANCE_THRESHOLD for score in ml_scrs):
-        return ml_scrs, ML_RELEVANCE_THRESHOLD
-
     tfidf_scrs = tfidf_relevance(text, kwords)
     return tfidf_scrs, TFIDF_RELEVANCE_THRESHOLD
 
