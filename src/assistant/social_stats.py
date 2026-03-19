@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from telethon.errors.rpcerrorlist import ChannelPrivateError
 
-from src.assistant.tg_parser import _ensure_client
+from src.assistant.tg_parser import _ensure_client, has_stored_session
 from src.assistant.vk_parser import _vk_call, _sleep_throttle
 from src.db.db import SessionLocal
 from src.db.models.article import Article
@@ -141,9 +141,13 @@ def _collect_vk_stats(session, logger, items: list[tuple[int, int, int]], collec
 
 
 async def _collect_tg_stats_async(logger, channel_items: Dict[str, Dict[int, int]]) -> Dict[int, tuple[int, int, int, int]]:
+    if not has_stored_session():
+        logger.write("[INFO] TG stats skipped: no stored Telegram session")
+        return {}
+
     client = await _ensure_client()
     if client is None:
-        logger.write("[INFO] TG stats skipped: not authorized")
+        logger.write("[INFO] TG stats skipped: Telegram session is not authorized")
         return {}
 
     results: Dict[int, tuple[int, int, int, int]] = {}

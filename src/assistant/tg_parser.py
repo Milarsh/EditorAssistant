@@ -34,6 +34,17 @@ TG_SLEEP_ON_FLOOD = int(os.getenv("TG_SLEEP_ON_FLOOD", "60"))
 WINDOW_SEC = int(os.getenv("WINDOW_SEC", "10"))
 MEDIA_DIR = "./media"
 
+
+def _load_session_string() -> Optional[str]:
+    try:
+        return Path(SESSION_FILE).read_text(encoding="utf-8").strip() or None
+    except (FileNotFoundError, UnicodeDecodeError):
+        return None
+
+
+def has_stored_session() -> bool:
+    return _load_session_string() is not None
+
 def _channel_from_url(url: str) -> Optional[str]:
     url = (url or "").strip()
     for prefix in ("https://t.me/", "http://t.me/", "https://telegram.me/", "http://telegram.me/"):
@@ -78,11 +89,9 @@ async def _ensure_client():
     if not API_ID or not API_HASH:
         raise RuntimeError("API_ID/API_HASH are not set")
     Path(os.path.dirname(SESSION_FILE)).mkdir(parents=True, exist_ok=True)
-    session_str = None
-    try:
-        session_str = Path(SESSION_FILE).read_text(encoding="utf-8").strip() or None
-    except (FileNotFoundError, UnicodeDecodeError):
-        pass
+    session_str = _load_session_string()
+    if not session_str:
+        return None
 
     client = TelegramClient(
         StringSession(session_str), API_ID, API_HASH,
@@ -351,9 +360,13 @@ async def _run_tg_cycle_async(logger) -> int:
         logger.write("[INFO] TG parser skipped: auth flow active")
         return 0
 
+    if not has_stored_session():
+        logger.write("[INFO] TG parser skipped: no stored Telegram session")
+        return 0
+
     client = await _ensure_client()
     if client is None:
-        logger.write("[INFO] TG parser skipped: not authorized")
+        logger.write("[INFO] TG parser skipped: Telegram session is not authorized")
         return 0
     total = 0
     try:
